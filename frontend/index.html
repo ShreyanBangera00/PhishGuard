@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhishGuard — Explainable AI Phishing Detection</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="logo-badge">🛡️</div>
+        <div>
+          <h1>PhishGuard <span class="badge-ai">AI 2.0</span></h1>
+          <p class="subtitle">Next-Gen Phishing Detection with Rule-Based Explainability & Multi-Modal Analysis</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <span class="status-dot"></span>
+        <span id="system-status">Engine Online</span>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="url-tab">🔍 URL Scanner & Explainability</button>
+      <button class="tab-btn" data-tab="email-tab">✉️ Email Inspector</button>
+      <button class="tab-btn" data-tab="feed-tab">📡 Live Threat Feed</button>
+      <button class="tab-btn" data-tab="metrics-tab">📊 Model Benchmarks</button>
+    </nav>
+
+    <!-- Tab 1: URL Scanner -->
+    <main class="tab-content active" id="url-tab">
+      <section class="card input-card">
+        <label for="url-input" class="input-label">Enter Target URL to Inspect</label>
+        <div class="input-group">
+          <input type="text" id="url-input" placeholder="e.g. http://appleid.apple.com.manage-auth.tk/login.php" autocomplete="off" spellcheck="false">
+          <button id="btn-scan" class="btn-primary">⚡ Scan URL</button>
+          <button id="btn-deep-scan" class="btn-secondary" title="Inspects both lexical features and page DOM content">🌐 Deep Page Scan</button>
+        </div>
+
+        <!-- Quick Samples -->
+        <div class="quick-samples">
+          <span class="samples-label">Test Samples:</span>
+          <button class="sample-chip" data-sample="http://paypal-security-verification.xyz/update-account?session=94821">🔴 Spoofed Brand</button>
+          <button class="sample-chip" data-sample="http://192.168.1.105:8080/secure/bank-login.html">🔴 Raw IP Host</button>
+          <button class="sample-chip" data-sample="http://bit.ly/claim-account-access">🟡 Shortened Link</button>
+          <button class="sample-chip" data-sample="https://github.com/security/advisories">🟢 Safe GitHub</button>
+          <button class="sample-chip" data-sample="https://www.google.com/search?q=cybersecurity">🟢 Safe Google</button>
+        </div>
+      </section>
+
+      <!-- Scanning Loader -->
+      <div id="scan-loader" class="loader-container hidden">
+        <div class="spinner"></div>
+        <p>Extracting 17 features & computing feature attribution values...</p>
+      </div>
+
+      <!-- Results Display Section -->
+      <section id="result-section" class="result-section hidden">
+        <!-- Main Verdict Card -->
+        <div id="verdict-banner" class="verdict-banner">
+          <div class="verdict-left">
+            <div id="verdict-icon" class="verdict-icon">⚠️</div>
+            <div>
+              <div class="verdict-tag" id="verdict-tag">RISK DETECTED</div>
+              <h2 id="verdict-title" class="verdict-title">Phishing Attack Detected</h2>
+              <p id="target-url-display" class="target-url-display"></p>
+            </div>
+          </div>
+          <div class="verdict-right">
+            <div class="confidence-box">
+              <span class="conf-label">Confidence</span>
+              <span id="confidence-value" class="conf-value">99.4%</span>
+            </div>
+            <div class="risk-meter-container">
+              <div class="risk-bar-track">
+                <div id="risk-bar-fill" class="risk-bar-fill"></div>
+              </div>
+              <span class="risk-caption" id="risk-caption">Risk Score: 98/100</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two Column Layout: Explainability & Extracted Features -->
+        <div class="results-grid">
+          <!-- Feature Attribution Explanations Column -->
+          <div class="card explain-card">
+            <div class="card-header">
+              <h3>🧠 Explainability Factor Breakdown (Feature Attribution)</h3>
+              <span class="chip-badge">Why this was flagged</span>
+            </div>
+            <p class="section-desc">Each factor shifts model probability towards phishing (+) or legitimate (-):</p>
+            <div id="reasons-list" class="reasons-list">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Feature Telemetry Column -->
+          <div class="card telemetry-card">
+            <div class="card-header">
+              <h3>🔬 Extracted Feature Telemetry</h3>
+              <span class="chip-badge">17 Features</span>
+            </div>
+            <div id="feature-chips" class="feature-chips-grid">
+              <!-- Populated dynamically -->
+            </div>
+
+            <!-- Page Inspection Details if Deep Scan was used -->
+            <div id="page-scan-details" class="page-scan-details hidden">
+              <h4>🌐 DOM Content Scraping Signals</h4>
+              <div id="page-signals" class="page-signals"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 2: Email Inspector -->
+    <main class="tab-content" id="email-tab">
+      <section class="card">
+        <div class="card-header">
+          <h3>✉️ Multi-Modal Email Threat Inspector</h3>
+          <span class="chip-badge">Social Engineering Analysis</span>
+        </div>
+        <p class="section-desc">Analyze inbound email headers, sender spoofing, and body urgency triggers.</p>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Sender Address</label>
+            <input type="text" id="email-sender" placeholder="e.g. security@paypal-verify-account.com">
+          </div>
+          <div class="form-group">
+            <label>Claimed Organization</label>
+            <input type="text" id="email-claimed-org" placeholder="e.g. PayPal">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Email Subject</label>
+          <input type="text" id="email-subject" placeholder="e.g. Urgent: Your account has been temporarily restricted!">
+        </div>
+
+        <div class="form-group">
+          <label>Email Body</label>
+          <textarea id="email-body" rows="6" placeholder="Paste full email text or HTML content..."></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button id="btn-test-phish-email" class="btn-secondary">Load Phishing Email Sample</button>
+          <button id="btn-scan-email" class="btn-primary">🛡️ Analyze Email Threat</button>
+        </div>
+
+        <div id="email-result" class="email-result hidden">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 3: Live Threat Feed -->
+    <main class="tab-content" id="feed-tab">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3>📡 Real-Time Live Feed Stream</h3>
+            <p class="section-desc">Streamed URLs evaluated in real time against the active ensemble engine.</p>
+          </div>
+          <div class="feed-controls">
+            <button id="btn-refresh-feed" class="btn-secondary">🔄 Refresh Threat Feed</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="feed-table">
+            <thead>
+              <tr>
+                <th>Verdict</th>
+                <th>Target URL</th>
+                <th>Confidence</th>
+                <th>Key Trigger</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="feed-table-body">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 4: Model Benchmarks -->
+    <main class="tab-content" id="metrics-tab">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3>📊 Baseline vs Production Model Comparison</h3>
+            <p class="section-desc">Comprehensive test-set evaluation benchmarks (Stratified 80/20 split on 7,974 URLs).</p>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>Model Architecture</th>
+                <th>Accuracy</th>
+                <th>Precision</th>
+                <th>Recall (Critical)</th>
+                <th>F1-Score</th>
+                <th>ROC-AUC</th>
+              </tr>
+            </thead>
+            <tbody id="metrics-table-body">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="metrics-notes">
+          <div class="note-box">
+            <strong>🎯 Key Engineering Rationale:</strong>
+            In cybersecurity defense, <em>Recall is prioritized</em> over precision to minimize False Negatives. Missing a phishing link puts the organization at critical breach risk, whereas flagging a questionable URL introduces only minor verification latency.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>PhishGuard Cybersecurity Engine &copy; 2026 · Software Engineering Capstone Project</p>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
