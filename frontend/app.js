@@ -33,11 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnTestPhishEmail = document.getElementById('btn-test-phish-email');
   const emailResult = document.getElementById('email-result');
 
-  // Feed & Metrics
-  const feedTableBody = document.getElementById('feed-table-body');
-  const btnRefreshFeed = document.getElementById('btn-refresh-feed');
-  const metricsTableBody = document.getElementById('metrics-table-body');
-
+  // Feed & Metrics references removed
+  
   // ─── 1. Tab Switching ───
   tabs.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -48,17 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const targetTab = document.getElementById(btn.dataset.tab);
       if (targetTab) {
         targetTab.classList.add('active');
-        if (btn.dataset.tab === 'feed-tab') loadLiveFeed();
-        if (btn.dataset.tab === 'metrics-tab') loadMetrics();
       }
-    });
-  });
-
-  // ─── 2. Quick Sample Injection ───
-  sampleChips.forEach(chip => {
-    chip.addEventListener('click', () => {
-      urlInput.value = chip.dataset.sample;
-      triggerScan(false);
     });
   });
 
@@ -288,68 +275,5 @@ PayPal Security Department`;
     }
   });
 
-  // ─── 6. Live Feed ───
-  async function loadLiveFeed() {
-    feedTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-tertiary);">Loading threat feed...</td></tr>';
-    try {
-      const resp = await fetch('/api/live-feed?count=8');
-      const items = await resp.json();
 
-      feedTableBody.innerHTML = '';
-      items.forEach(item => {
-        const tr = document.createElement('tr');
-        const badgeClass = item.is_phishing ? 'danger' : 'safe';
-        const badgeLabel = item.is_phishing ? 'PHISHING' : 'SAFE';
-        tr.innerHTML = `
-          <td><span class="status-badge ${badgeClass}">${badgeLabel}</span></td>
-          <td class="feed-url" title="${item.url}">${item.url}</td>
-          <td><strong>${item.confidence}%</strong></td>
-          <td style="color: var(--text-secondary); font-size: 12px;">${item.top_reason}</td>
-          <td><button class="btn-inspect" data-url="${item.url}">Inspect</button></td>
-        `;
-
-        tr.querySelector('.btn-inspect').addEventListener('click', () => {
-          tabs[0].click();
-          urlInput.value = item.url;
-          triggerScan(false);
-        });
-
-        feedTableBody.appendChild(tr);
-      });
-    } catch (e) {
-      feedTableBody.innerHTML = `<tr><td colspan="5" style="color: var(--danger);">Failed to load feed: ${e.message}</td></tr>`;
-    }
-  }
-
-  btnRefreshFeed.addEventListener('click', loadLiveFeed);
-
-  // ─── 7. Model Metrics ───
-  async function loadMetrics() {
-    metricsTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-tertiary);">Loading benchmarks...</td></tr>';
-    try {
-      const resp = await fetch('/api/metrics');
-      const data = await resp.json();
-      const metrics = data.metrics || {};
-
-      metricsTableBody.innerHTML = '';
-      Object.entries(metrics).forEach(([modelName, m]) => {
-        const tr = document.createElement('tr');
-        const isBest = (data.model_name === modelName);
-        tr.innerHTML = `
-          <td><strong>${modelName}</strong> ${isBest ? '<span class="chip-badge" style="margin-left: 6px;">Champion</span>' : ''}</td>
-          <td>${(m.accuracy * 100).toFixed(2)}%</td>
-          <td>${(m.precision * 100).toFixed(2)}%</td>
-          <td><strong>${(m.recall * 100).toFixed(2)}%</strong></td>
-          <td>${m.f1_score.toFixed(4)}</td>
-          <td>${m.roc_auc.toFixed(4)}</td>
-        `;
-        metricsTableBody.appendChild(tr);
-      });
-    } catch (e) {
-      metricsTableBody.innerHTML = `<tr><td colspan="6" style="color: var(--danger);">Error loading benchmarks: ${e.message}</td></tr>`;
-    }
-  }
-
-  // Pre-load metrics
-  loadMetrics();
 });

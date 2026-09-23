@@ -12,16 +12,11 @@
     <!-- Unified Top Navigation (CrowdStrike Style) -->
     <header class="cs-navbar">
       <div class="cs-brand">
-        <div class="cs-logo-mark">
-          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </div>
-        <h1>PHISHGUARD</h1>
+        <img src="/static/nav-logo.png" alt="PhishGuard Logo" style="height: 32px; width: auto; object-fit: contain;">
       </div>
       <nav class="cs-nav-links">
         <button class="tab-btn active" data-tab="url-tab">URL Scanner <span class="chevron">⌄</span></button>
         <button class="tab-btn" data-tab="email-tab">Email Analysis <span class="chevron">⌄</span></button>
-        <button class="tab-btn" data-tab="feed-tab">Threat Feed <span class="chevron">⌄</span></button>
-        <button class="tab-btn" data-tab="metrics-tab">Benchmarks <span class="chevron">⌄</span></button>
         <button class="dummy-link" onclick="alert('About Us page coming soon')">About Us <span class="chevron">⌄</span></button>
         <button class="dummy-link" onclick="alert('Contact Us page coming soon')">Contact Us <span class="chevron">⌄</span></button>
       </nav>
@@ -37,14 +32,6 @@
           <button id="btn-deep-scan" class="btn-secondary" title="Analyzes both URL features and page DOM content">Deep Scan</button>
         </div>
 
-        <div class="quick-samples">
-          <span class="samples-label">Test with:</span>
-          <button class="sample-chip" data-sample="http://paypal-security-verification.xyz/update-account?session=94821">Spoofed Brand</button>
-          <button class="sample-chip" data-sample="http://192.168.1.105:8080/secure/bank-login.html">Raw IP Host</button>
-          <button class="sample-chip" data-sample="http://bit.ly/claim-account-access">Shortened Link</button>
-          <button class="sample-chip" data-sample="https://github.com/security/advisories">Safe (GitHub)</button>
-          <button class="sample-chip" data-sample="https://www.google.com/search?q=cybersecurity">Safe (Google)</button>
-        </div>
       </section>
 
       <!-- Loader -->
@@ -150,75 +137,6 @@
       </section>
     </main>
 
-    <!-- Tab 3: Threat Feed -->
-    <main class="tab-content" id="feed-tab">
-      <section class="card">
-        <div class="card-header">
-          <div>
-            <h3>Live Threat Feed</h3>
-            <p class="section-desc" style="margin-bottom: 0;">URLs evaluated in real time against the detection engine.</p>
-          </div>
-          <div class="feed-controls">
-            <button id="btn-refresh-feed" class="btn-secondary">Refresh Feed</button>
-          </div>
-        </div>
-
-        <div class="table-responsive">
-          <table class="feed-table">
-            <thead>
-              <tr>
-                <th>Verdict</th>
-                <th>URL</th>
-                <th>Confidence</th>
-                <th>Primary Indicator</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="feed-table-body"></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-
-    <!-- Tab 4: Model Benchmarks -->
-    <main class="tab-content" id="metrics-tab">
-      <section class="card">
-        <div class="card-header">
-          <div>
-            <h3>Model Performance Benchmarks</h3>
-            <p class="section-desc" style="margin-bottom: 0;">Test-set evaluation on 7,974 URLs (stratified 80/20 split).</p>
-          </div>
-        </div>
-
-        <div class="table-responsive">
-          <table class="metrics-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Accuracy</th>
-                <th>Precision</th>
-                <th>Recall</th>
-                <th>F1-Score</th>
-                <th>ROC-AUC</th>
-              </tr>
-            </thead>
-            <tbody id="metrics-table-body"></tbody>
-          </table>
-        </div>
-
-        <div class="metrics-notes">
-          <div class="note-box">
-            <strong>Design Rationale:</strong>
-            In cybersecurity defense, Recall is prioritized over Precision to minimize false negatives. Missing a phishing URL poses critical breach risk, whereas flagging a safe URL introduces only minor verification overhead.
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <!-- Footer -->
-    <footer class="footer">
-      <p>PhishGuard &copy; 2026 &middot; Software Engineering Capstone Project</p>
-    </footer>
   </div>
 
   <script src="/static/app.js"></script>

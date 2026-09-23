@@ -47,6 +47,24 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100vw;
+  height: 100vh;
+  background-image: url('/static/watermark.jpg');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 50%;
+  opacity: 0.15;
+  z-index: -1;
+  pointer-events: none;
 }
 
 .app-container {
@@ -138,12 +156,14 @@ body {
 
 /* ─── Card ─── */
 .card {
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.85); /* Translucent to show watermark */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 28px;
   margin-bottom: 24px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
 }
 
 .card-header {
