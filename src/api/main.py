@@ -281,42 +281,46 @@ def analyze_email(req: EmailRequest):
             })
             break # One malicious link is enough
 
+    # Map each weighted-formula feature key to the UI rule name + badge,
+    # so every reason shown to the user also carries its weight and
+    # contribution from the weighted scoring formula (see
+    # src/features/email_features.py WEIGHTS / breakdown).
+    RULE_META = {
+        'sender_domain_mismatch': ('Sender Domain Spoof', '🔴'),
+        'urgency_score': ('Psychological Urgency', '🟡'),
+        'poor_grammar_score': ('Poor Grammar & Spam Words', '🟡'),
+        'html_form_present': ('Embedded Form', '🔴'),
+        'cred_request_score': ('Credential Solicitation', '🔴'),
+        'num_links': ('Link Volume', '🟡'),
+    }
+    breakdown_by_feature = {b['feature']: b for b in feats.get('breakdown', [])}
+
+    def _add_reason(feature_key, detail):
+        rule, badge = RULE_META[feature_key]
+        entry = {'rule': rule, 'badge': badge, 'detail': detail}
+        b = breakdown_by_feature.get(feature_key)
+        if b:
+            entry['weight'] = b['weight']
+            entry['strength'] = b['strength']
+            entry['contribution'] = b['contribution']
+        reasons.append(entry)
+
     if feats['sender_domain_mismatch']:
-        reasons.append({
-            'rule': 'Sender Domain Spoof',
-            'badge': '🔴',
-            'detail': f"Sender does not match declared company '{req.claimed_org}'"
-        })
+        _add_reason('sender_domain_mismatch', feats.get('sender_domain_reason', f"Sender does not match declared company '{req.claimed_org}'"))
     if feats['urgency_score'] > 0:
-        reasons.append({
-            'rule': 'Psychological Urgency',
-            'badge': '🟡',
-            'detail': f"Detected {feats['urgency_score']} urgency trigger(s) attempting to rush recipient"
-        })
+        _add_reason('urgency_score', f"Detected {feats['urgency_score']} urgency trigger(s) attempting to rush recipient")
     if feats['poor_grammar_score'] > 0:
-        reasons.append({
-            'rule': 'Poor Grammar & Spam Words',
-            'badge': '🟡',
-            'detail': f"Detected {feats['poor_grammar_score']} common spam/phishing phrases"
-        })
+        _add_reason('poor_grammar_score', f"Detected {feats['poor_grammar_score']} common spam/phishing phrases")
     if feats['html_form_present']:
-        reasons.append({
-            'rule': 'Embedded Form',
-            'badge': '🔴',
-            'detail': "Email contains embedded interactive input/form elements"
-        })
+        _add_reason('html_form_present', "Email contains embedded interactive input/form elements")
     if feats['cred_request_score'] > 0:
-        reasons.append({
-            'rule': 'Credential Solicitation',
-            'badge': '🔴',
-            'detail': "Explicit keywords requesting passwords, banking, or personal tokens"
-        })
+        _add_reason('cred_request_score', "Explicit keywords requesting passwords, banking, or personal tokens")
 
     # If a malicious link is found, bump risk score
     risk_score = feats['email_risk_score']
     if has_malicious_link:
         risk_score = max(risk_score, 95)
-        
+
     is_suspicious = bool(risk_score >= 50)
 
     return {
@@ -324,7 +328,8 @@ def analyze_email(req: EmailRequest):
         'risk_score': risk_score,
         'verdict': 'Phishing Email' if is_suspicious else 'Legitimate Email',
         'features': feats,
-        'reasons': reasons
+        'reasons': reasons,
+        'breakdown': feats.get('breakdown', [])
     }
 
 
