@@ -284,7 +284,7 @@ PayPal Security Department`;
           <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
             <div style="background: rgba(255,255,255,0.85); border: 1px solid #d1d5db; border-radius: 8px; padding: 12px;">
               <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">
-                BASELINE &mdash; JADHAV & CHANDRE PAPER
+                BASELINE &mdash; JADHAV & CHANDRE (2025) PAPER
               </div>
               <div style="font-size: 18px; font-weight: 800; color: #374151; margin: 4px 0;">
                 ${bp.final_score} / 100
@@ -310,7 +310,7 @@ PayPal Security Department`;
                 </span>
               </div>
               <div style="font-family: monospace; font-size: 11.5px; color: #1f2937; line-height: 1.5;">
-                S<sub>H</sub>* = &Sigma;(&alpha;<sub>i</sub> &middot; &phi;<sub>i</sub>) [${pa.raw_SH}] + &Psi; [${pa.synergy_bonus}] = <strong>${pa.S_H_star}</strong><br>
+                S<sub>H</sub>* = &Sigma;(&alpha;<sub>i</sub> &middot; &phi;<sub>i</sub>) + &Psi;<sub>synergy</sub> = <strong>${pa.S_H_star}</strong><br>
                 S<sub>final</sub> = ${pa.beta_adaptive}&middot;(S<sub>H</sub>*) + ${(1 - pa.beta_adaptive).toFixed(3)}&middot;(P<sub>ML</sub>) = <strong>${pa.final_score}</strong>
               </div>
               <div style="margin-top: 6px; font-size: 11px; color: #15803d;">
