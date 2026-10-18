@@ -8,7 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDeepScan = document.getElementById('btn-deep-scan');
   const scanLoader = document.getElementById('scan-loader');
   const resultSection = document.getElementById('result-section');
-  const sampleChips = document.querySelectorAll('.sample-chip');
 
   // Verdict Elements
   const verdictBanner = document.getElementById('verdict-banner');
@@ -32,8 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnScanEmail = document.getElementById('btn-scan-email');
   const btnTestPhishEmail = document.getElementById('btn-test-phish-email');
   const emailResult = document.getElementById('email-result');
-
-  // Feed & Metrics references removed
   
   // ─── 1. Tab Switching ───
   tabs.forEach(btn => {
@@ -258,61 +255,145 @@ PayPal Security Department`;
       const isSusp = data.is_suspicious;
       emailResult.className = `email-result-box ${isSusp ? 'danger' : 'safe'}`;
 
+      // 1. Triggered Reasons List
       let reasonsHtml = (data.reasons || []).map(r => `
-        <div class="page-signal-row">
-          <span><strong>${r.rule}</strong></span>
-          <span>${r.detail}</span>
+        <div class="page-signal-row" style="padding: 6px 0; border-bottom: 1px dashed rgba(0,0,0,0.08);">
+          <span><strong>${r.badge || ''} ${r.rule}</strong></span>
+          <span style="font-size: 12.5px; text-align: right; max-width: 65%;">${r.detail}</span>
         </div>
       `).join('');
 
-      // Weighted-formula breakdown: RiskScore = 100 x sum(weight_i x strength_i)
+      // 2. Model Comparison Data (Base Paper Jadhav & Chandre 2025 vs. Proposed A-HMFA)[cite: 3]
       const FEATURE_LABELS = {
-        sender_domain_mismatch: 'Sender Domain Spoof',
-        cred_request_score: 'Credential Solicitation',
-        html_form_present: 'Embedded Form',
-        urgency_score: 'Psychological Urgency',
-        poor_grammar_score: 'Poor Grammar & Spam Words',
-        num_links: 'Link Volume'
+        sender_domain_mismatch: 'Sender Domain Spoofing',
+        cred_request_score: 'Credential Solicitation (Zone-Scaled)',
+        html_form_present: 'Malicious URL / Payload Structure',
+        urgency_score: 'Psychological Urgency (Zone-Scaled)',
+        poor_grammar_score: 'Generic Salutation & Spam Phrases',
+        num_links: 'Hyperlink Volume & Risk Density'
       };
+
       const breakdown = data.breakdown || [];
-      const formulaTotal = Math.round(breakdown.reduce((s, b) => s + b.contribution, 0));
+      const mc = data.model_comparison || (data.features && data.features.model_comparison) || null;
+
+      const propRawSum = breakdown.reduce((s, b) => s + b.contribution, 0);
+      const synergyBonus = mc && mc.proposed_ahmfa ? mc.proposed_ahmfa.synergy_bonus : 0;
+      const propShStar = mc && mc.proposed_ahmfa ? mc.proposed_ahmfa.S_H_star : Math.min(100, propRawSum);
+      const baseSh = mc && mc.base_paper ? mc.base_paper.S_H : 0;
+
+      // 3. Side-by-Side Research Paper vs. Proposed Model Cards
+      let comparisonCardsHtml = '';
+      if (mc && mc.base_paper && mc.proposed_ahmfa) {
+        const bp = mc.base_paper;
+        const pa = mc.proposed_ahmfa;
+        const legacyScore = mc.legacy_v1_score !== undefined ? mc.legacy_v1_score : 60;
+
+        comparisonCardsHtml = `
+          <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
+            <div style="background: rgba(255,255,255,0.85); border: 1px solid #d1d5db; border-radius: 8px; padding: 12px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">
+                Baseline — Jadhav & Chandre (2025) Paper[cite: 3]
+              </div>
+              <div style="font-size: 18px; font-weight: 800; color: #374151; margin: 4px 0;">
+                ${bp.final_score} / 100
+                <span style="font-size: 11px; font-weight: 500; color: #6b7280;">(Legacy v1: ${legacyScore}/100)</span>
+              </div>
+              <div style="font-family: monospace; font-size: 11.5px; color: #4b5563; line-height: 1.5;">
+                S_H = &Sigma;(&alpha;_i &middot; h_i) = <strong>${bp.S_H}</strong> (Binary h_i &isin; {0,1})[cite: 3]<br>
+                S_final = 0.50&middot;(${bp.S_H}) + 0.50&middot;(${bp.P_ML}) = <strong>${bp.final_score}</strong>
+              </div>
+              <div style="margin-top: 6px; font-size: 11px; color: #b45309;">
+                ⚠️ Flaw: Binary h_i = 1 stays flat when editing Subject words[cite: 3].
+              </div>
+            </div>
+
+            <div style="background: #ffffff; border: 2px solid #dc2626; border-radius: 8px; padding: 12px; box-shadow: 0 2px 6px rgba(220,38,38,0.08);">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #dc2626; letter-spacing: 0.5px;">
+                Proposed Model — A-HMFA (Our Improvement)
+              </div>
+              <div style="font-size: 18px; font-weight: 800; color: #dc2626; margin: 4px 0;">
+                ${pa.final_score} / 100
+                <span style="font-size: 11px; font-weight: 600; color: #16a34a;">
+                  (&Delta; ${(pa.final_score - bp.final_score >= 0 ? '+' : '') + (pa.final_score - bp.final_score).toFixed(2)} vs Paper)
+                </span>
+              </div>
+              <div style="font-family: monospace; font-size: 11.5px; color: #1f2937; line-height: 1.5;">
+                S_H* = &Sigma;(&alpha;_i &middot; &phi;_i) [${pa.raw_SH}] + &Psi; [${pa.synergy_bonus}] = <strong>${pa.S_H_star}</strong><br>
+                S_final = ${pa.beta_adaptive}&middot;(${pa.S_H_star}) + ${(1 - pa.beta_adaptive).toFixed(3)}&middot;(${pa.P_ML}) = <strong>${pa.final_score}</strong>
+              </div>
+              <div style="margin-top: 6px; font-size: 11px; color: #15803d;">
+                ✓ Log-Zone &phi;_i (Subj 1.75×) + Cross-Domain Synergy (&Psi;) + Adaptive &beta;
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // 4. Comparative Weighted Breakdown Table
       let breakdownHtml = '';
       if (breakdown.length) {
-        const rows = breakdown.map(b => `
-          <tr>
-            <td>${FEATURE_LABELS[b.feature] || b.feature}</td>
-            <td>${b.weight.toFixed(2)}</td>
-            <td>${b.strength.toFixed(2)}</td>
-            <td><strong>${b.contribution.toFixed(1)}</strong></td>
-          </tr>
-        `).join('');
-        // A confirmed malicious link (Safe Browsing) overrides the formula score.
-        const override = data.risk_score > formulaTotal
-          ? `<tr><td colspan="3">Threat-intel override (malicious link flagged)</td><td><strong>${data.risk_score}</strong></td></tr>`
+        const rows = breakdown.map(b => {
+          const hVal = b.binary_h !== undefined ? b.binary_h : (b.strength > 0 ? 1 : 0);
+          const basePts = b.base_contribution !== undefined ? b.base_contribution : (b.weight * hVal * 100);
+          return `
+            <tr>
+              <td><strong>${b.label || FEATURE_LABELS[b.feature] || b.feature}</strong></td>
+              <td style="text-align: center;">${b.weight.toFixed(2)}</td>
+              <td style="text-align: center; color: #6b7280;">${hVal} (${basePts.toFixed(1)})</td>
+              <td style="text-align: center; font-weight: 600; color: #dc2626;">${b.strength.toFixed(3)}</td>
+              <td style="text-align: right;"><strong>+${b.contribution.toFixed(2)}</strong></td>
+            </tr>
+          `;
+        }).join('');
+
+        const synergyRow = synergyBonus > 0
+          ? `<tr style="background: rgba(254, 226, 226, 0.45);">
+               <td colspan="4"><strong>Cross-Domain Attack Chain Synergy (&Psi;_synergy)</strong> <em>(Spoof &times; URL + Urgency &times; Cred &times; URL)</em></td>
+               <td style="text-align: right; color: #dc2626;"><strong>+${synergyBonus.toFixed(2)}</strong></td>
+             </tr>`
           : '';
+
         breakdownHtml = `
-          <p class="formula-note">Score = 100 &times; &Sigma; (weight &times; strength)</p>
-          <table class="breakdown-table">
-            <thead><tr><th>Indicator</th><th>Weight</th><th>Strength (0-1)</th><th>Points</th></tr></thead>
+          <p class="formula-note" style="margin-top: 16px; font-weight: 600;">
+            Comparative Rule Breakdown: Base Paper Binary (h_i &isin; {0,1})[cite: 3] vs. Proposed Continuous Zone-Density (&phi;_i &isin; [0,1])
+          </p>
+          <table class="breakdown-table" style="width: 100%; border-collapse: collapse; margin-top: 6px; background: rgba(255,255,255,0.9); border-radius: 6px; overflow: hidden;">
+            <thead>
+              <tr style="border-bottom: 2px solid rgba(0,0,0,0.1); text-align: left;">
+                <th style="padding: 8px;">Multi-Domain Indicator</th>
+                <th style="padding: 8px; text-align: center;">Weight (&alpha;_i)[cite: 3]</th>
+                <th style="padding: 8px; text-align: center;">Paper Binary h_i (Pts)[cite: 3]</th>
+                <th style="padding: 8px; text-align: center;">Proposed &phi;_i (0–1)</th>
+                <th style="padding: 8px; text-align: right;">Proposed Pts</th>
+              </tr>
+            </thead>
             <tbody>
               ${rows}
-              <tr class="breakdown-total"><td colspan="3">Total (formula)</td><td><strong>${formulaTotal} / 100</strong></td></tr>
-              ${override}
+              ${synergyRow}
+              <tr class="breakdown-total" style="border-top: 2px solid rgba(0,0,0,0.15); font-weight: 700;">
+                <td colspan="2" style="padding: 8px;">Heuristic Subtotal (S_H vs. S_H*)[cite: 3]</td>
+                <td style="padding: 8px; text-align: center; color: #4b5563;">${baseSh.toFixed(1)} / 100</td>
+                <td style="padding: 8px; text-align: center;">—</td>
+                <td style="padding: 8px; text-align: right; color: #dc2626;">${propShStar.toFixed(2)} / 100</td>
+              </tr>
             </tbody>
           </table>
         `;
       }
 
       emailResult.innerHTML = `
-        <h4>${isSusp ? 'High-Risk Phishing Email Detected' : 'Low Threat — Normal Communication'}</h4>
-        <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-secondary);">Risk Score: <strong>${data.risk_score}/100</strong></p>
-        <div>${reasonsHtml}</div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap;">
+          <h4>${isSusp ? 'High-Risk Phishing Email Detected' : 'Low Threat — Normal Communication'}</h4>
+          <p style="margin: 0; font-size: 14px; color: var(--text-secondary);">
+            Final Hybrid Risk Score: <strong style="font-size: 17px; color: ${isSusp ? '#dc2626' : '#16a34a'};">${data.risk_score} / 100</strong>
+          </p>
+        </div>
+        ${comparisonCardsHtml}
+        <div style="margin-top: 14px;">${reasonsHtml}</div>
         ${breakdownHtml}
       `;
     } catch (e) {
       alert('Error analyzing email: ' + e.message);
     }
   });
-
-
 });
