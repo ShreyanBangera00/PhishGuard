@@ -758,6 +758,35 @@ tr:hover td {
 .email-result-box.danger h4 { color: var(--danger); }
 .email-result-box.safe h4 { color: var(--safe); }
 
+/* ─── Weighted risk-score breakdown (email analysis) ─── */
+.formula-note {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.breakdown-table th,
+.breakdown-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.breakdown-table th:not(:first-child),
+.breakdown-table td:not(:first-child) {
+  text-align: right;
+}
+
+.breakdown-table td strong { color: var(--text-primary); }
+.breakdown-total td { border-top: 2px solid var(--border); }
+
 /* ─── Threat Intel Badge ─── */
 .threat-intel-badge {
   display: inline-flex;
