@@ -265,10 +265,49 @@ PayPal Security Department`;
         </div>
       `).join('');
 
+      // Weighted-formula breakdown: RiskScore = 100 x sum(weight_i x strength_i)
+      const FEATURE_LABELS = {
+        sender_domain_mismatch: 'Sender Domain Spoof',
+        cred_request_score: 'Credential Solicitation',
+        html_form_present: 'Embedded Form',
+        urgency_score: 'Psychological Urgency',
+        poor_grammar_score: 'Poor Grammar & Spam Words',
+        num_links: 'Link Volume'
+      };
+      const breakdown = data.breakdown || [];
+      const formulaTotal = Math.round(breakdown.reduce((s, b) => s + b.contribution, 0));
+      let breakdownHtml = '';
+      if (breakdown.length) {
+        const rows = breakdown.map(b => `
+          <tr>
+            <td>${FEATURE_LABELS[b.feature] || b.feature}</td>
+            <td>${b.weight.toFixed(2)}</td>
+            <td>${b.strength.toFixed(2)}</td>
+            <td><strong>${b.contribution.toFixed(1)}</strong></td>
+          </tr>
+        `).join('');
+        // A confirmed malicious link (Safe Browsing) overrides the formula score.
+        const override = data.risk_score > formulaTotal
+          ? `<tr><td colspan="3">Threat-intel override (malicious link flagged)</td><td><strong>${data.risk_score}</strong></td></tr>`
+          : '';
+        breakdownHtml = `
+          <p class="formula-note">Score = 100 &times; &Sigma; (weight &times; strength)</p>
+          <table class="breakdown-table">
+            <thead><tr><th>Indicator</th><th>Weight</th><th>Strength (0-1)</th><th>Points</th></tr></thead>
+            <tbody>
+              ${rows}
+              <tr class="breakdown-total"><td colspan="3">Total (formula)</td><td><strong>${formulaTotal} / 100</strong></td></tr>
+              ${override}
+            </tbody>
+          </table>
+        `;
+      }
+
       emailResult.innerHTML = `
         <h4>${isSusp ? 'High-Risk Phishing Email Detected' : 'Low Threat — Normal Communication'}</h4>
         <p style="margin-bottom: 12px; font-size: 13px; color: var(--text-secondary);">Risk Score: <strong>${data.risk_score}/100</strong></p>
         <div>${reasonsHtml}</div>
+        ${breakdownHtml}
       `;
     } catch (e) {
       alert('Error analyzing email: ' + e.message);
