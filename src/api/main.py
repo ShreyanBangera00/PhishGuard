@@ -71,7 +71,6 @@ threat_service = ThreatIntelligenceService(
 )
 
 # Demo feed samples — used as fallback when no live feed is available.
-# These simulate real-world phishing and legitimate URLs for demonstration.
 DEMO_FEED_SAMPLES = [
     "http://appleid.apple.com.manage-auth.tk/login.php",
     "http://192.168.1.105:8080/secure-banking/verify.html",
@@ -122,22 +121,17 @@ def run_url_prediction(url_str: str) -> Dict[str, Any]:
     if model is None:
         raise HTTPException(status_code=500, detail="Production ML model is not loaded")
 
-    # Predict probability is no longer tied to the ML model's output
-    # We generate reasons purely from heuristics
     reasons = explain_prediction(model, feature_names, feat_dict, top_k=5)
 
-    # Calculate base risk from heuristics
     base_risk = sum(r['impact'] for r in reasons if r['impact'] > 0) * 100
     base_risk = min(max(base_risk, 0), 100)
 
-    # Cross-reference against external threat intelligence
     threat_intel = threat_service.lookup_url(url)
     
     gsb_available = threat_intel.get('google_safe_browsing', {}).get('available', False)
     any_threat = threat_intel.get('any_threat_found', False)
 
     if gsb_available and any_threat:
-        # GSB is the absolute source of truth for POSITIVES
         is_phish = True
         risk_score = max(base_risk, 90.0)
         confidence = 99.0
@@ -149,7 +143,6 @@ def run_url_prediction(url_str: str) -> Dict[str, Any]:
             'badge': 'GSB'
         })
     else:
-        # If GSB didn't flag it (or is unavailable), rely on our heuristics to catch zero-days
         risk_score = base_risk
         is_phish = bool(risk_score >= 50)
         confidence = round(risk_score if is_phish else (100 - risk_score), 2)
@@ -157,7 +150,6 @@ def run_url_prediction(url_str: str) -> Dict[str, Any]:
     label = "Phishing" if is_phish else "Legitimate"
     risk_score = round(risk_score, 1)
 
-    # Gather domain and network intelligence
     network_intel = get_network_intel(url)
 
     return {
@@ -191,7 +183,6 @@ def predict_url(req: URLRequest):
 @app.post("/api/analyze-content")
 def analyze_content(req: URLRequest):
     """Multi-Modal endpoint combining lexical URL features and live HTML page scraping."""
-    # SSRF Validation: reject requests to private, loopback, or reserved IP ranges
     is_safe, ssrf_error = check_ssrf_safe(req.url)
     if not is_safe:
         raise HTTPException(status_code=400, detail=f"SSRF Protection: {ssrf_error}")
@@ -202,7 +193,6 @@ def analyze_content(req: URLRequest):
     except SSRFSecurityError as e:
         raise HTTPException(status_code=400, detail=f"SSRF Protection: {str(e)}")
 
-    # Multi-modal risk combination
     combined_risk = url_pred['risk_score']
     extra_reasons = []
 
@@ -275,51 +265,51 @@ def analyze_email(req: EmailRequest):
         if ti.get('any_threat_found'):
             has_malicious_link = True
             reasons.append({
-                'rule': 'Malicious Link Detected',
+                'rule': 'Malicious Link Detected (GSB)',
                 'badge': '🔴',
                 'detail': f"Google Safe Browsing flagged link: {url}"
             })
-            break # One malicious link is enough
+            break
 
-    # Map each weighted-formula feature key to the UI rule name + badge,
-    # so every reason shown to the user also carries its weight and
-    # contribution from the weighted scoring formula (see
-    # src/features/email_features.py WEIGHTS / breakdown).
     RULE_META = {
-        'sender_domain_mismatch': ('Sender Domain Spoof', '🔴'),
-        'urgency_score': ('Psychological Urgency', '🟡'),
-        'poor_grammar_score': ('Poor Grammar & Spam Words', '🟡'),
-        'html_form_present': ('Embedded Form', '🔴'),
-        'cred_request_score': ('Credential Solicitation', '🔴'),
-        'num_links': ('Link Volume', '🟡'),
+        'sender_domain_mismatch': ('Sender Domain Spoofing', '🔴'),
+        'cred_request_score': ('Credential Solicitation (Zone-Scaled)', '🔴'),
+        'html_form_present': ('Malicious URL / Payload Structure', '🔴'),
+        'urgency_score': ('Psychological Urgency (Zone-Scaled)', '🟡'),
+        'poor_grammar_score': ('Generic Salutation & Spam Words', '🟡'),
+        'num_links': ('Hyperlink Volume & Risk Density', '🟡'),
     }
     breakdown_by_feature = {b['feature']: b for b in feats.get('breakdown', [])}
 
-    def _add_reason(feature_key, detail):
+    def _add_reason(feature_key, fallback_detail):
         rule, badge = RULE_META[feature_key]
+        b = breakdown_by_feature.get(feature_key, {})
+        detail = b.get('reason') or fallback_detail
         entry = {'rule': rule, 'badge': badge, 'detail': detail}
-        b = breakdown_by_feature.get(feature_key)
         if b:
-            entry['weight'] = b['weight']
-            entry['strength'] = b['strength']
-            entry['contribution'] = b['contribution']
+            entry['weight'] = b.get('weight', 0)
+            entry['binary_h'] = b.get('binary_h', 0)
+            entry['base_contribution'] = b.get('base_contribution', 0)
+            entry['strength'] = b.get('strength', 0)
+            entry['contribution'] = b.get('contribution', 0)
         reasons.append(entry)
 
     if feats['sender_domain_mismatch']:
         _add_reason('sender_domain_mismatch', feats.get('sender_domain_reason', f"Sender does not match declared company '{req.claimed_org}'"))
+    if feats['cred_request_score'] > 0:
+        _add_reason('cred_request_score', "Explicit keywords requesting passwords, banking, or personal tokens")
+    if feats['html_form_present'] or breakdown_by_feature.get('html_form_present', {}).get('strength', 0) > 0:
+        _add_reason('html_form_present', "Email contains high-risk URL protocol/TLD or embedded form elements")
     if feats['urgency_score'] > 0:
         _add_reason('urgency_score', f"Detected {feats['urgency_score']} urgency trigger(s) attempting to rush recipient")
     if feats['poor_grammar_score'] > 0:
         _add_reason('poor_grammar_score', f"Detected {feats['poor_grammar_score']} common spam/phishing phrases")
-    if feats['html_form_present']:
-        _add_reason('html_form_present', "Email contains embedded interactive input/form elements")
-    if feats['cred_request_score'] > 0:
-        _add_reason('cred_request_score', "Explicit keywords requesting passwords, banking, or personal tokens")
+    if feats['num_links'] > 0:
+        _add_reason('num_links', f"Detected {feats['num_links']} external hyperlink(s) in email body")
 
-    # If a malicious link is found, bump risk score
     risk_score = feats['email_risk_score']
     if has_malicious_link:
-        risk_score = max(risk_score, 95)
+        risk_score = max(risk_score, 95.0)
 
     is_suspicious = bool(risk_score >= 50)
 
@@ -329,7 +319,8 @@ def analyze_email(req: EmailRequest):
         'verdict': 'Phishing Email' if is_suspicious else 'Legitimate Email',
         'features': feats,
         'reasons': reasons,
-        'breakdown': feats.get('breakdown', [])
+        'breakdown': feats.get('breakdown', []),
+        'model_comparison': feats.get('model_comparison', {})
     }
 
 
