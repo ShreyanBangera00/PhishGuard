@@ -284,7 +284,7 @@ PayPal Security Department`;
           <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
             <div style="background: rgba(255,255,255,0.85); border: 1px solid #d1d5db; border-radius: 8px; padding: 12px;">
               <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">
-                BASELINE &mdash; JADHAV & CHANDRE (2025) PAPER
+                BASELINE &mdash; JADHAV & CHANDRE PAPER
               </div>
               <div style="font-size: 18px; font-weight: 800; color: #374151; margin: 4px 0;">
                 ${bp.final_score} / 100
