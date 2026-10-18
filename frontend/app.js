@@ -108,7 +108,6 @@ document.addEventListener('DOMContentLoaded', () => {
       verdictTitle.textContent = 'URL Appears Legitimate';
     }
 
-    // Render Feature Attribution Reasons
     reasonsList.innerHTML = '';
     (data.reasons || []).forEach(r => {
       const item = document.createElement('div');
@@ -125,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
       reasonsList.appendChild(item);
     });
 
-    // Render Extracted Features
     featureChips.innerHTML = '';
     const feats = data.features || {};
     const displayKeys = [
@@ -150,7 +148,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Threat Intel badge (if available)
     if (data.threat_intel && data.threat_intel.google_safe_browsing) {
       const gsb = data.threat_intel.google_safe_browsing;
       const existingBadge = resultSection.querySelector('.threat-intel-badge');
@@ -172,7 +169,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (verdictRight) verdictRight.appendChild(badge);
     }
 
-    // Network & Domain Intel
     const networkIntelDetails = document.getElementById('network-intel-details');
     const networkSignals = document.getElementById('network-signals');
     if (data.network_intel && (data.network_intel.ip_address || data.network_intel.registrar)) {
@@ -194,7 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (networkIntelDetails) networkIntelDetails.classList.add('hidden');
     }
 
-    // Deep Page Signals
     if (isDeep && data.page_analysis) {
       pageScanDetails.classList.remove('hidden');
       const pa = data.page_analysis;
@@ -255,7 +250,6 @@ PayPal Security Department`;
       const isSusp = data.is_suspicious;
       emailResult.className = `email-result-box ${isSusp ? 'danger' : 'safe'}`;
 
-      // 1. Triggered Reasons List
       let reasonsHtml = (data.reasons || []).map(r => `
         <div class="page-signal-row" style="padding: 6px 0; border-bottom: 1px dashed rgba(0,0,0,0.08);">
           <span><strong>${r.badge || ''} ${r.rule}</strong></span>
@@ -263,7 +257,6 @@ PayPal Security Department`;
         </div>
       `).join('');
 
-      // 2. Model Comparison Data (Base Paper Jadhav & Chandre 2025 vs. Proposed A-HMFA)[cite: 3]
       const FEATURE_LABELS = {
         sender_domain_mismatch: 'Sender Domain Spoofing',
         cred_request_score: 'Credential Solicitation (Zone-Scaled)',
@@ -281,35 +274,34 @@ PayPal Security Department`;
       const propShStar = mc && mc.proposed_ahmfa ? mc.proposed_ahmfa.S_H_star : Math.min(100, propRawSum);
       const baseSh = mc && mc.base_paper ? mc.base_paper.S_H : 0;
 
-      // 3. Side-by-Side Research Paper vs. Proposed Model Cards
       let comparisonCardsHtml = '';
       if (mc && mc.base_paper && mc.proposed_ahmfa) {
         const bp = mc.base_paper;
         const pa = mc.proposed_ahmfa;
-        const legacyScore = mc.legacy_v1_score !== undefined ? mc.legacy_v1_score : 60;
+        const legacyScore = mc.legacy_v1_score !== undefined ? mc.legacy_v1_score : 70;
 
         comparisonCardsHtml = `
           <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
             <div style="background: rgba(255,255,255,0.85); border: 1px solid #d1d5db; border-radius: 8px; padding: 12px;">
               <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">
-                Baseline — Jadhav & Chandre (2025) Paper[cite: 3]
+                BASELINE &mdash; JADHAV & CHANDRE (2025) PAPER
               </div>
               <div style="font-size: 18px; font-weight: 800; color: #374151; margin: 4px 0;">
                 ${bp.final_score} / 100
                 <span style="font-size: 11px; font-weight: 500; color: #6b7280;">(Legacy v1: ${legacyScore}/100)</span>
               </div>
               <div style="font-family: monospace; font-size: 11.5px; color: #4b5563; line-height: 1.5;">
-                S_H = &Sigma;(&alpha;_i &middot; h_i) = <strong>${bp.S_H}</strong> (Binary h_i &isin; {0,1})[cite: 3]<br>
-                S_final = 0.50&middot;(${bp.S_H}) + 0.50&middot;(${bp.P_ML}) = <strong>${bp.final_score}</strong>
+                S<sub>H</sub> = &Sigma;(&alpha;<sub>i</sub> &middot; h<sub>i</sub>) = <strong>${bp.S_H}</strong> (Binary h<sub>i</sub> &isin; {0,1})<br>
+                S<sub>final</sub> = 0.50&middot;(${bp.S_H}) + 0.50&middot;(${bp.P_ML}) = <strong>${bp.final_score}</strong>
               </div>
               <div style="margin-top: 6px; font-size: 11px; color: #b45309;">
-                ⚠️ Flaw: Binary h_i = 1 stays flat when editing Subject words[cite: 3].
+                &#9888; Flaw: Binary h<sub>i</sub> = 1 stays flat when editing Subject words.
               </div>
             </div>
 
             <div style="background: #ffffff; border: 2px solid #dc2626; border-radius: 8px; padding: 12px; box-shadow: 0 2px 6px rgba(220,38,38,0.08);">
               <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #dc2626; letter-spacing: 0.5px;">
-                Proposed Model — A-HMFA (Our Improvement)
+                PROPOSED MODEL &mdash; A-HMFA (OUR IMPROVEMENT)
               </div>
               <div style="font-size: 18px; font-weight: 800; color: #dc2626; margin: 4px 0;">
                 ${pa.final_score} / 100
@@ -318,18 +310,17 @@ PayPal Security Department`;
                 </span>
               </div>
               <div style="font-family: monospace; font-size: 11.5px; color: #1f2937; line-height: 1.5;">
-                S_H* = &Sigma;(&alpha;_i &middot; &phi;_i) [${pa.raw_SH}] + &Psi; [${pa.synergy_bonus}] = <strong>${pa.S_H_star}</strong><br>
-                S_final = ${pa.beta_adaptive}&middot;(${pa.S_H_star}) + ${(1 - pa.beta_adaptive).toFixed(3)}&middot;(${pa.P_ML}) = <strong>${pa.final_score}</strong>
+                S<sub>H</sub>* = &Sigma;(&alpha;<sub>i</sub> &middot; &phi;<sub>i</sub>) [${pa.raw_SH}] + &Psi; [${pa.synergy_bonus}] = <strong>${pa.S_H_star}</strong><br>
+                S<sub>final</sub> = ${pa.beta_adaptive}&middot;(S<sub>H</sub>*) + ${(1 - pa.beta_adaptive).toFixed(3)}&middot;(P<sub>ML</sub>) = <strong>${pa.final_score}</strong>
               </div>
               <div style="margin-top: 6px; font-size: 11px; color: #15803d;">
-                ✓ Log-Zone &phi;_i (Subj 1.75×) + Cross-Domain Synergy (&Psi;) + Adaptive &beta;
+                &#10003; Log-Zone &phi;<sub>i</sub> (Subj 1.75&times;) + Cross-Domain Synergy (&Psi;) + Adaptive &beta;
               </div>
             </div>
           </div>
         `;
       }
 
-      // 4. Comparative Weighted Breakdown Table
       let breakdownHtml = '';
       if (breakdown.length) {
         const rows = breakdown.map(b => {
@@ -348,22 +339,22 @@ PayPal Security Department`;
 
         const synergyRow = synergyBonus > 0
           ? `<tr style="background: rgba(254, 226, 226, 0.45);">
-               <td colspan="4"><strong>Cross-Domain Attack Chain Synergy (&Psi;_synergy)</strong> <em>(Spoof &times; URL + Urgency &times; Cred &times; URL)</em></td>
+               <td colspan="4"><strong>Cross-Domain Attack Chain Synergy (&Psi;<sub>synergy</sub>)</strong> <em>(Spoof &times; URL + Urgency &times; Cred &times; URL)</em></td>
                <td style="text-align: right; color: #dc2626;"><strong>+${synergyBonus.toFixed(2)}</strong></td>
              </tr>`
           : '';
 
         breakdownHtml = `
           <p class="formula-note" style="margin-top: 16px; font-weight: 600;">
-            Comparative Rule Breakdown: Base Paper Binary (h_i &isin; {0,1})[cite: 3] vs. Proposed Continuous Zone-Density (&phi;_i &isin; [0,1])
+            Comparative Rule Breakdown: Base Paper Binary (h<sub>i</sub> &isin; {0,1}) vs. Proposed Continuous Zone-Density (&phi;<sub>i</sub> &isin; [0,1])
           </p>
           <table class="breakdown-table" style="width: 100%; border-collapse: collapse; margin-top: 6px; background: rgba(255,255,255,0.9); border-radius: 6px; overflow: hidden;">
             <thead>
               <tr style="border-bottom: 2px solid rgba(0,0,0,0.1); text-align: left;">
                 <th style="padding: 8px;">Multi-Domain Indicator</th>
-                <th style="padding: 8px; text-align: center;">Weight (&alpha;_i)[cite: 3]</th>
-                <th style="padding: 8px; text-align: center;">Paper Binary h_i (Pts)[cite: 3]</th>
-                <th style="padding: 8px; text-align: center;">Proposed &phi;_i (0–1)</th>
+                <th style="padding: 8px; text-align: center;">Weight (&alpha;<sub>i</sub>)</th>
+                <th style="padding: 8px; text-align: center;">Paper Binary h<sub>i</sub> (Pts)</th>
+                <th style="padding: 8px; text-align: center;">Proposed &phi;<sub>i</sub> (0&ndash;1)</th>
                 <th style="padding: 8px; text-align: right;">Proposed Pts</th>
               </tr>
             </thead>
@@ -371,9 +362,9 @@ PayPal Security Department`;
               ${rows}
               ${synergyRow}
               <tr class="breakdown-total" style="border-top: 2px solid rgba(0,0,0,0.15); font-weight: 700;">
-                <td colspan="2" style="padding: 8px;">Heuristic Subtotal (S_H vs. S_H*)[cite: 3]</td>
+                <td colspan="2" style="padding: 8px;">Heuristic Subtotal (S<sub>H</sub> vs. S<sub>H</sub>*)</td>
                 <td style="padding: 8px; text-align: center; color: #4b5563;">${baseSh.toFixed(1)} / 100</td>
-                <td style="padding: 8px; text-align: center;">—</td>
+                <td style="padding: 8px; text-align: center;">&mdash;</td>
                 <td style="padding: 8px; text-align: right; color: #dc2626;">${propShStar.toFixed(2)} / 100</td>
               </tr>
             </tbody>
