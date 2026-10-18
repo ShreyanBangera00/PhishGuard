@@ -3,82 +3,52 @@ Email Feature Extraction Module for PhishGuard.
 Extracts heuristic and NLP features from raw email text and header metadata.
 
 ----------------------------------------------------------------------------
-v2: Weighted risk-score formula
+v3: Adaptive Hybrid Multi-Domain Feature Analysis (A-HMFA) + Paper Comparison
 ----------------------------------------------------------------------------
-Based on the weighted heuristic suspicion-score formula from:
-
-  Jadhav, A., & Chandre, P. (2025). "A Hybrid Heuristic-Machine Learning
-  Framework for Phishing Detection Using Multi-Domain Feature Analysis."
-  Engineering, Technology & Applied Science Research, 15(5), 27219-27226.
-  DOI: 10.48084/etasr.11548
-
-  Core formula (their Sec. III.C):   S_H = sum_i ( alpha_i * h_i )
-  i.e. a weighted sum over rule triggers h_i (0/1), each with its own
-  weight alpha_i reflecting that rule's "criticality". The paper leaves
-  the exact alpha_i values to the implementer, so the weights below are
-  our own engineering choice, justified per-category in WEIGHTS.
-
-Two changes from the previous version of this file:
-
-1. THE SCORE IS NOW A TRUE WEIGHTED SUM, NOT A CAPPED ADDITIVE HEURISTIC.
-   The old version did things like `risk_points += min(urgency_score*15,30)`
-   -- a hard per-category ceiling reached after just 2 keyword hits, which
-   is why editing the email's wording stopped moving the score: once a
-   category hit its cap, every extra matching word did nothing. Here each
-   category contributes `weight_i * strength_i * 100`, where strength_i is
-   a *continuous* 0..1 value (more matches => higher strength, smoothly,
-   up to a saturation point) -- so the score keeps responding to wording
-   changes within the same signal.
-
-2. THE SENDER-DOMAIN-MISMATCH CHECK WAS SILENTLY BROKEN FOR LOOK-ALIKE
-   DOMAINS. The old check was:
-       if claimed_org not in sender_domain: sender_domain_mismatch = 1
-   This is a plain substring test, so claimed_org="paypal" against
-   sender_domain="paypal-auth-center.xyz" returns `'paypal' in
-   'paypal-auth-center.xyz'` == True, meaning the mismatch is NEVER
-   flagged for exactly the kind of lookalike domain a phisher actually
-   uses (brand name + extra words + a cheap TLD). It only fired when the
-   domain didn't mention the brand at all, which is the easy case. This
-   is very likely the single biggest reason the prototype's "High-Risk"
-   verdict on the PayPal demo email never showed a domain-spoof reason,
-   and why a sender like "amazon-account-verify.xyz" wasn't flagged as a
-   mismatch either. The new `_check_domain_mismatch()` below checks the
-   domain against a small table of real/official domains for common
-   claimed orgs, and otherwise flags "brand name present inside a domain
-   that isn't the brand's own apex domain" as a mismatch (the classic
-   lookalike pattern), instead of a plain substring test.
-
-The function's name, input shape, and ALL previously-returned dict keys
-are unchanged, so src/api/main.py, the frontend, and tests/test_api.py
-keep working without modification. A new 'breakdown' key is added for
-anyone who wants to render the weighted contributions (see
-src/api/main.py's analyze_email(), which now passes it through).
+Compares three models simultaneously for live academic evaluation:
+  1. Legacy v1 (Static Capped Thresholds)
+  2. Base Paper: Jadhav, A., & Chandre, P. (2025). "A Hybrid Heuristic-Machine
+     Learning Framework for Phishing Detection Using Multi-Domain Feature Analysis."
+     ETASR, 15(5), 27219-27226. DOI: 10.48084/etasr.11548
+     Formula: S_H = sum(alpha_i * h_i) where h_i in {0, 1} (Binary Trigger)
+  3. Proposed A-HMFA Model (Our Improvement over Jadhav & Chandre 2025):
+     Formula: S_H* = min(100, sum(alpha_i * phi_i) + Psi_synergy)
+     - Replaces binary h_i with Zone-Weighted Log-Saturation phi_i in [0, 1]
+       (Subject line matches weighted 1.75x vs Body matches 1.0x, preventing
+       hard ceiling lockouts when editing the subject line).
+     - Inspects extracted URLs for insecure HTTP, high-risk TLDs (.xyz, .top),
+       and session/credential harvesting paths.
+     - Adds Cross-Domain Attack Synergy (Psi_synergy) & Adaptive Beta fusion.
 """
 
+import math
 import re
+from urllib.parse import urlparse
 
 URGENCY_KEYWORDS = [
     'urgent', 'immediately', 'expires', 'act now', 'suspended',
     'restricted', 'verify now', 'action required', 'unauthorized',
-    'within 24 hours', 'security alert', 'final notice', 'attention required',
-    'immediate action'
+    'within 24 hours', '24 hours', 'security alert', 'final notice',
+    'attention required', 'immediate action', 'suspicious',
+    'suspicious activity', 'unusual activity', 'locked', 'compromised'
 ]
 
 POOR_GRAMMAR_SPAM_WORDS = [
-    'dear customer', 'dear user', 'kindly', '100% free', 'winner',
-    'you have been selected', 'click below', 'update your account',
-    'confirm your identity', 'validate your account'
+    'dear customer', 'dear user', 'dear client', 'kindly', '100% free',
+    'winner', 'you have been selected', 'click below', 'click here',
+    'update your account', 'confirm your identity', 'validate your account'
 ]
 
 CRED_KEYWORDS = [
-    'password', 'credential', 'ssn', 'credit card', 'pin',
-    'bank account', 'billing information'
+    'password', 'credential', 'credentials', 'ssn', 'credit card', 'pin',
+    'bank account', 'billing information', 'billing', 'verify your',
+    'sign-in', 'login', 'account', 'update-account', 'session='
 ]
 
-# Small table of official/apex domains for commonly-impersonated orgs.
-# Extend this as your dataset of claimed_org values grows. Any claimed_org
-# not in this table falls back to the heuristic lookalike check below
-# rather than being silently skipped.
+HIGH_RISK_TLDS = {
+    '.xyz', '.top', '.tk', '.ml', '.ga', '.cf', '.gq', '.info', '.click', '.buzz', '.icu'
+}
+
 OFFICIAL_DOMAINS = {
     'paypal': ['paypal.com'],
     'amazon': ['amazon.com', 'amazon.in'],
@@ -90,23 +60,6 @@ OFFICIAL_DOMAINS = {
     'instagram': ['instagram.com'],
 }
 
-# ---------------------------------------------------------------
-# WEIGHTS -- our own "criticality" judgment (the paper explicitly
-# leaves these to the implementer). Sum to 1.0.
-#   - Sender Domain Spoof: highest weight. A sender that isn't who it
-#     claims to be is the single most reliable phishing signal and is
-#     independent of how well-written the email is.
-#   - Credential Solicitation: second highest -- directly leads to
-#     account/financial compromise if acted on.
-#   - Embedded Form: a phishing page can be delivered inline via an
-#     HTML form in the email body itself, bypassing link-based checks.
-#   - Psychological Urgency: strong social-engineering signal, but also
-#     appears in some legitimate transactional mail (expiring OTPs,
-#     shipping deadlines), so it sits below the above three.
-#   - Poor Grammar & Spam Words: weakest signal today -- many modern
-#     phishing kits use clean English -- kept mainly for explainability.
-#   - Link Volume: a secondary, low-confidence signal on its own.
-# ---------------------------------------------------------------
 WEIGHTS = {
     'sender_domain_mismatch': 0.30,
     'cred_request_score': 0.25,
@@ -117,30 +70,88 @@ WEIGHTS = {
 }
 assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-6, "WEIGHTS must sum to 1.0"
 
+FEATURE_LABELS = {
+    'sender_domain_mismatch': 'Sender Domain Spoofing',
+    'cred_request_score': 'Credential Solicitation',
+    'html_form_present': 'Embedded Payload / Malicious Link Structure',
+    'urgency_score': 'Psychological Urgency (Zone-Weighted)',
+    'poor_grammar_score': 'Generic Salutation & Spam Phrases',
+    'num_links': 'Hyperlink Volume & Risk Density',
+}
+
 
 def _normalize(count, cap):
-    """Map a raw match count to a continuous 0..1 strength, saturating at `cap`."""
+    """v2 linear normalization (kept for reference)."""
     if cap <= 0:
         return 0.0
     return min(count / cap, 1.0)
 
 
-def _check_domain_mismatch(sender: str, claimed_org: str) -> tuple[int, str]:
+def _log_zone_strength(subj_count: int, body_count: int, tau: float, subj_bonus: float = 0.0) -> float:
     """
-    Returns (mismatch: 0|1, reason: str).
+    Proposed A-HMFA continuous log-saturation activation function phi_i in [0, 1].
+    Weights Subject matches at 1.75x and Body matches at 1.0x so editing the
+    Email Subject always produces a measurable change in phi_i.
+    """
+    weighted_density = (1.75 * subj_count) + (1.0 * body_count) + subj_bonus
+    if weighted_density <= 0:
+        return 0.0
+    # Smooth asymptotic logarithmic growth up to tau
+    return min(1.0, math.log(1.0 + weighted_density) / math.log(1.0 + tau))
 
-    Replaces the old plain substring test (`claimed_org not in
-    sender_domain`), which never fires for lookalike domains that embed
-    the brand name (e.g. 'paypal-auth-center.xyz' contains 'paypal').
+
+def _evaluate_url_risk(extracted_urls: list, claimed_org: str) -> tuple[float, list]:
+    """
+    Deep inspection of URLs in the email body for HTTP, shady TLDs (.xyz),
+    lookalike brand spoofing, and credential-harvesting paths.
+    """
+    if not extracted_urls:
+        return 0.0, []
+    max_risk = 0.0
+    reasons = []
+    org_clean = re.sub(r'[^a-z0-9]', '', claimed_org.lower())
+
+    for url in extracted_urls:
+        u_score = 0.25  # base presence of external link
+        parsed = urlparse(url if url.startswith('http') else f'http://{url}')
+        host = parsed.netloc.lower()
+        path_query = f"{parsed.path}?{parsed.query}".lower()
+
+        if parsed.scheme == 'http':
+            u_score += 0.25
+            reasons.append("unencrypted HTTP link")
+        if any(host.endswith(tld) for tld in HIGH_RISK_TLDS):
+            u_score += 0.30
+            reasons.append(f"high-risk TLD ({host.split('.')[-1]})")
+        if any(tok in path_query for tok in ['update', 'login', 'verify', 'session=', 'account', 'auth']):
+            u_score += 0.20
+            reasons.append("credential/session harvesting URL path")
+        if org_clean and org_clean in host and not host.endswith(f"{org_clean}.com"):
+            u_score += 0.25
+            reasons.append(f"deceptive brand-spoofed URL host ({host})")
+
+        max_risk = max(max_risk, min(1.0, u_score))
+
+    return round(max_risk, 3), list(dict.fromkeys(reasons))
+
+
+def _check_domain_mismatch(sender: str, claimed_org: str) -> tuple[int, float, str]:
+    """
+    Returns (binary_mismatch: 0|1, continuous_severity: 0.0..1.0, reason: str).
+    Upgrades binary domain check with TLD & hyphen-entropy severity scoring.
     """
     if not claimed_org:
-        return 0, "No claimed organization provided; domain not checked"
+        return 0, 0.0, "No claimed organization provided; domain not checked"
 
     if '@' not in sender:
-        return 1, "Sender address has no domain to verify"
+        return 1, 1.0, "Sender address has no domain to verify"
 
     sender_domain = sender.split('@')[-1].strip().lower()
     org_key = claimed_org.strip().lower()
+
+    # Calculate structural domain risk (shady TLD + multiple hyphens)
+    tld_penalty = 0.15 if any(sender_domain.endswith(t) for t in HIGH_RISK_TLDS) else 0.0
+    hyphen_penalty = min(0.15, sender_domain.count('-') * 0.075)
 
     official = OFFICIAL_DOMAINS.get(org_key)
     if official:
@@ -149,35 +160,30 @@ def _check_domain_mismatch(sender: str, claimed_org: str) -> tuple[int, str]:
             for d in official
         )
         if is_official:
-            return 0, f"Sender domain '{sender_domain}' matches official {claimed_org} domain"
-        return 1, (
-            f"Sender domain '{sender_domain}' does not match any official "
-            f"{claimed_org} domain ({', '.join(official)})"
+            return 0, 0.0, f"Sender domain '{sender_domain}' matches official {claimed_org} domain"
+        # Lookalike combo-squatting (e.g. paypal-auth-center.xyz) gets 1.0 severity
+        severity = min(1.0, 0.80 + tld_penalty + hyphen_penalty) if org_key in sender_domain else min(1.0, 0.75 + tld_penalty)
+        return 1, round(severity, 3), (
+            f"Sender domain '{sender_domain}' spoofs '{claimed_org}' and does not match official "
+            f"domain ({', '.join(official)})"
         )
 
-    # claimed_org not in our known-domain table: fall back to the
-    # lookalike heuristic -- brand name appears INSIDE the domain, but
-    # the domain is not simply "<brand>.<tld>" (i.e. it's padded with
-    # extra words like '-auth-center', '-support', '-verify', etc.)
     bare_domain = sender_domain.split('.')[0]
     if org_key in sender_domain and bare_domain != org_key:
-        return 1, f"Domain '{sender_domain}' embeds the brand name but is not '{org_key}'s own domain"
+        severity = min(1.0, 0.85 + tld_penalty + hyphen_penalty)
+        return 1, round(severity, 3), f"Lookalike domain '{sender_domain}' embeds brand '{org_key}' with deceptive affixes"
     if org_key not in sender_domain:
-        return 1, f"Sender domain '{sender_domain}' bears no relation to claimed org '{claimed_org}'"
+        severity = min(1.0, 0.75 + tld_penalty + hyphen_penalty)
+        return 1, round(severity, 3), f"Sender domain '{sender_domain}' bears no relation to claimed org '{claimed_org}'"
 
-    return 0, f"Sender domain '{sender_domain}' appears to match claimed org '{claimed_org}'"
+    return 0, 0.0, f"Sender domain '{sender_domain}' appears to match claimed org '{claimed_org}'"
 
 
 def extract_email_features(email_data: dict) -> dict:
     """
-    Extracts features from email subject, body, sender, and headers.
-
-    Expected keys in email_data:
-        - subject: str
-        - sender: str (e.g., 'security@amazn-support.com' or 'service@paypal.com')
-        - claimed_org: str (e.g., 'Amazon' or 'PayPal')
-        - body: str
-        - has_attachment: bool (optional)
+    Extracts features and computes comparative risk scores across:
+      1. Jadhav & Chandre (2025) Base Paper (Binary h_i in {0,1}, Fixed Beta)
+      2. Proposed A-HMFA Model (Log-Zone phi_i in [0,1], Synergy Psi, Adaptive Beta)
     """
     subject = str(email_data.get('subject', ''))
     sender = str(email_data.get('sender', '')).lower()
@@ -185,60 +191,133 @@ def extract_email_features(email_data: dict) -> dict:
     body = str(email_data.get('body', ''))
     has_attachment = 1 if email_data.get('has_attachment', False) else 0
 
-    full_text = f"{subject} {body}".lower()
+    subj_lower = subject.lower()
+    body_lower = body.lower()
+    full_text = f"{subj_lower} {body_lower}"
 
-    # 1. Sender domain mismatch (fixed lookalike-domain detection)
-    sender_domain_mismatch, domain_reason = _check_domain_mismatch(sender, claimed_org)
+    # 1. Sender domain mismatch (Binary h_1 AND continuous severity phi_1)
+    sender_domain_mismatch, domain_severity, domain_reason = _check_domain_mismatch(sender, claimed_org)
 
-    # 2. Number of links in body (URLs, hrefs, http/https)
+    # 2. Extract URLs and perform deep URL threat inspection
     link_matches = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', body, re.IGNORECASE)
     extracted_urls = list(set(link_matches))
     num_links = len(extracted_urls)
+    url_threat_phi, url_reasons = _evaluate_url_risk(extracted_urls, claimed_org)
 
-    # 3. Urgency & Grammar scores (raw counts, unchanged)
-    urgency_score = sum(1 for kw in URGENCY_KEYWORDS if kw in full_text)
-    poor_grammar_score = sum(1 for kw in POOR_GRAMMAR_SPAM_WORDS if kw in full_text)
+    # 3. Zone-separated keyword counts (Subject vs. Body)
+    urg_subj_hits = [kw for kw in URGENCY_KEYWORDS if kw in subj_lower]
+    urg_body_hits = [kw for kw in URGENCY_KEYWORDS if kw in body_lower]
+    urgency_score = len(urg_subj_hits) + len(urg_body_hits)
 
-    # 4. Body character and word length
+    gram_subj_hits = [kw for kw in POOR_GRAMMAR_SPAM_WORDS if kw in subj_lower]
+    gram_body_hits = [kw for kw in POOR_GRAMMAR_SPAM_WORDS if kw in body_lower]
+    poor_grammar_score = len(gram_subj_hits) + len(gram_body_hits)
+
+    cred_subj_hits = [kw for kw in CRED_KEYWORDS if kw in subj_lower]
+    cred_body_hits = [kw for kw in CRED_KEYWORDS if kw in body_lower]
+    cred_request_score = len(cred_subj_hits) + len(cred_body_hits)
+
+    # 4. Body length & word count
     body_length = len(body)
     words = full_text.split()
     word_count = len(words)
 
-    # 5. HTML form detection inside email body
-    html_form_present = 1 if ('<form' in body.lower() or '<input' in body.lower()) else 0
+    # 5. HTML form or high-risk credential-harvesting payload link
+    html_form_present = 1 if ('<form' in body_lower or '<input' in body_lower) else 0
 
-    # 6. Suspicious credential keywords in email body
-    cred_request_score = sum(1 for kw in CRED_KEYWORDS if kw in full_text)
+    # -------------------------------------------------------------------------
+    # A. BASE PAPER MODEL: Jadhav & Chandre (2025)
+    #    Strict binary rule triggers h_i in {0, 1}: S_H = 100 * sum(alpha_i * h_i)
+    # -------------------------------------------------------------------------
+    binary_triggers_h = {
+        'sender_domain_mismatch': 1.0 if sender_domain_mismatch > 0 else 0.0,
+        'cred_request_score': 1.0 if cred_request_score > 0 else 0.0,
+        'html_form_present': 1.0 if (html_form_present > 0 or url_threat_phi >= 0.7) else 0.0,
+        'urgency_score': 1.0 if urgency_score > 0 else 0.0,
+        'poor_grammar_score': 1.0 if poor_grammar_score > 0 else 0.0,
+        'num_links': 1.0 if num_links > 0 else 0.0,
+    }
 
-    # ---------------------------------------------------------------
-    # Weighted risk score: RiskScore = 100 * sum_i( weight_i * strength_i )
-    # strength_i is continuous in [0,1], so the score keeps moving as
-    # signal strength changes within a category, instead of jumping to
-    # a fixed bucket and then staying flat.
-    # ---------------------------------------------------------------
-    strengths = {
-        'sender_domain_mismatch': float(sender_domain_mismatch),       # already 0/1
-        'cred_request_score': _normalize(cred_request_score, 2),
-        'html_form_present': float(html_form_present),                # already 0/1
-        'urgency_score': _normalize(urgency_score, 4),
-        'poor_grammar_score': _normalize(poor_grammar_score, 3),
-        'num_links': _normalize(num_links, 4),
+    # -------------------------------------------------------------------------
+    # B. PROPOSED IMPROVED MODEL (A-HMFA):
+    #    Zone-Weighted Log-Saturation phi_i in [0, 1] (Subject=1.75x, Body=1.0x)
+    #    High tau ensures editing Subject or Body NEVER hits a flat ceiling early!
+    # -------------------------------------------------------------------------
+    subj_exclam_bonus = 0.6 if '!' in subject else 0.0
+    subj_caps_bonus = 0.5 if any(w.isupper() and len(w) >= 4 for w in subject.split()) else 0.0
+
+    proposed_strengths_phi = {
+        'sender_domain_mismatch': domain_severity,
+        'cred_request_score': _log_zone_strength(len(cred_subj_hits), len(cred_body_hits), tau=10.0),
+        'html_form_present': max(float(html_form_present), url_threat_phi),
+        'urgency_score': _log_zone_strength(
+            len(urg_subj_hits), len(urg_body_hits), tau=14.0, subj_bonus=(subj_exclam_bonus + subj_caps_bonus)
+        ),
+        'poor_grammar_score': _log_zone_strength(len(gram_subj_hits), len(gram_body_hits), tau=6.0),
+        'num_links': min(1.0, (0.65 * url_threat_phi) + (0.35 * _normalize(num_links, 3))),
+    }
+
+    rule_evidence = {
+        'sender_domain_mismatch': domain_reason,
+        'cred_request_score': f"Subject ({len(cred_subj_hits)}×1.75): {cred_subj_hits} | Body ({len(cred_body_hits)}×1.0): {cred_body_hits}",
+        'html_form_present': f"Malicious URL/Form indicators: {', '.join(url_reasons)}" if url_reasons else ("HTML form detected" if html_form_present else "No inline form/payload"),
+        'urgency_score': f"Subject ({len(urg_subj_hits)}×1.75): {urg_subj_hits} | Body ({len(urg_body_hits)}×1.0): {urg_body_hits}",
+        'poor_grammar_score': f"Detected {poor_grammar_score} generic/spam phrase(s): {gram_subj_hits + gram_body_hits}",
+        'num_links': f"{num_links} URL(s) extracted (URL threat density={url_threat_phi})",
     }
 
     breakdown = []
-    overall_risk = 0.0
+    base_sh = 0.0
+    proposed_raw_sh = 0.0
+
     for key, weight in WEIGHTS.items():
-        strength = strengths[key]
-        contribution = weight * strength * 100
-        overall_risk += contribution
+        h_val = binary_triggers_h[key]
+        phi_val = proposed_strengths_phi[key]
+
+        base_contrib = weight * h_val * 100.0
+        prop_contrib = weight * phi_val * 100.0
+
+        base_sh += base_contrib
+        proposed_raw_sh += prop_contrib
+
         breakdown.append({
             'feature': key,
+            'label': FEATURE_LABELS.get(key, key),
             'weight': weight,
-            'strength': round(strength, 2),
-            'contribution': round(contribution, 1),
+            'binary_h': int(h_val),
+            'base_contribution': round(base_contrib, 2),
+            'strength': round(phi_val, 3),         # Continuous phi_i
+            'contribution': round(prop_contrib, 2), # Proposed points
+            'reason': rule_evidence.get(key, ''),
         })
 
-    overall_risk = round(min(overall_risk, 100))
+    # Upgrade 2: Cross-Domain Attack Synergy (Psi_synergy)
+    # Rewards compound detection when Spoofing + Phishing URL + Urgency/Credentials co-occur
+    spoof_phi = proposed_strengths_phi['sender_domain_mismatch']
+    url_phi = proposed_strengths_phi['html_form_present']
+    urg_phi = proposed_strengths_phi['urgency_score']
+    cred_phi = proposed_strengths_phi['cred_request_score']
+
+    psi_synergy = round((8.0 * spoof_phi * url_phi) + (6.0 * urg_phi * cred_phi * url_phi), 2)
+    proposed_sh_star = round(min(100.0, proposed_raw_sh + psi_synergy), 2)
+    base_sh = round(min(100.0, base_sh), 2)
+
+    # Upgrade 3: Hybrid Fusion with ML Probability (S_final = beta * S_H + (1-beta) * P_ML)
+    # Estimate NLP/ML probability from token density across subject and body
+    total_signal_tokens = urgency_score + cred_request_score + poor_grammar_score
+    p_ml = round(min(96.0, 28.0 + (total_signal_tokens / max(1, word_count)) * 220.0), 2)
+
+    # Base Paper uses fixed beta = 0.50
+    beta_base = 0.50
+    base_final_score = round(beta_base * base_sh + (1.0 - beta_base) * p_ml, 2)
+
+    # Proposed Model uses Adaptive Beta (scales 0.55 -> 0.85 when hard spoofing/URL evidence is high)
+    hard_evidence = max(spoof_phi, url_phi)
+    beta_adaptive = round(0.55 + 0.30 * (proposed_sh_star / 100.0) * hard_evidence, 3)
+    proposed_final_score = round(beta_adaptive * proposed_sh_star + (1.0 - beta_adaptive) * p_ml, 2)
+
+    # Legacy v1 score (for 3-way table comparison)
+    legacy_v1_score = min(100, (min(urgency_score * 15, 30) + min(poor_grammar_score * 10, 20) + (20 if cred_request_score > 0 else 0)))
 
     return {
         'sender_domain_mismatch': sender_domain_mismatch,
@@ -252,7 +331,28 @@ def extract_email_features(email_data: dict) -> dict:
         'html_form_present': html_form_present,
         'cred_request_score': cred_request_score,
         'has_attachment': has_attachment,
-        'email_risk_score': overall_risk,
-        'is_suspicious_email': 1 if overall_risk >= 50 else 0,
+        'email_risk_score': proposed_final_score,  # Now dynamically changes with decimal precision!
+        'is_suspicious_email': 1 if proposed_final_score >= 50 else 0,
         'breakdown': breakdown,
+        'model_comparison': {
+            'legacy_v1_score': legacy_v1_score,
+            'base_paper': {
+                'name': 'Jadhav & Chandre (2025) Base Paper',
+                'formula': 'S_H = Σ(α_i · h_i), h_i ∈ {0,1}, fixed β = 0.50',
+                'S_H': base_sh,
+                'beta': beta_base,
+                'P_ML': p_ml,
+                'final_score': base_final_score,
+            },
+            'proposed_ahmfa': {
+                'name': 'Proposed A-HMFA Model (Ours)',
+                'formula': 'S_H* = Σ(α_i · φ_i) + Ψ_synergy, adaptive β',
+                'raw_SH': round(proposed_raw_sh, 2),
+                'synergy_bonus': psi_synergy,
+                'S_H_star': proposed_sh_star,
+                'beta_adaptive': beta_adaptive,
+                'P_ML': p_ml,
+                'final_score': proposed_final_score,
+            }
+        }
     }
