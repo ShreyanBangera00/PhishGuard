@@ -102,6 +102,33 @@
     <main class="tab-content" id="email-tab">
       <section class="card">
         <div class="card-header">
+          <h3>Connect Gmail Inbox</h3>
+          <span class="chip-badge">Optional</span>
+        </div>
+        <p class="section-desc">Pick an email straight from your inbox instead of copy-pasting. Use a 16-character Google App Password (Google Account &rarr; Security &rarr; 2-Step Verification &rarr; App Passwords). Credentials are used only for this request and never stored.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Gmail Address</label>
+            <input type="text" id="gmail-address" placeholder="you@gmail.com" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>App Password</label>
+            <input type="password" id="gmail-app-password" placeholder="abcd efgh ijkl mnop" autocomplete="off">
+          </div>
+        </div>
+        <div class="form-actions" style="margin-top: 0;">
+          <select id="gmail-folder" class="gmail-folder-select">
+            <option value="INBOX">Inbox</option>
+            <option value="SPAM">Spam</option>
+          </select>
+          <button id="btn-gmail-connect" class="btn-secondary">Load Recent Emails</button>
+        </div>
+        <div id="gmail-status" class="gmail-status hidden"></div>
+        <div id="gmail-list" class="gmail-list hidden"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
           <h3>Email Threat Analysis</h3>
           <span class="chip-badge">Social Engineering Detection</span>
         </div>

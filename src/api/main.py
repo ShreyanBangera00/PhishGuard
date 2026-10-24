@@ -265,19 +265,19 @@ def analyze_email(req: EmailRequest):
         if ti.get('any_threat_found'):
             has_malicious_link = True
             reasons.append({
-                'rule': 'Malicious Link Detected (GSB)',
+                'rule': 'Dangerous Link Flagged by Google Safe Browsing',
                 'badge': '🔴',
-                'detail': f"Google Safe Browsing flagged link: {url}"
+                'detail': f"Google Safe Browsing confirmed this link is unsafe: {url}"
             })
             break
 
     RULE_META = {
-        'sender_domain_mismatch': ('Sender Domain Spoofing', '🔴'),
-        'cred_request_score': ('Credential Solicitation (Zone-Scaled)', '🔴'),
-        'html_form_present': ('Malicious URL / Payload Structure', '🔴'),
-        'urgency_score': ('Psychological Urgency (Zone-Scaled)', '🟡'),
-        'poor_grammar_score': ('Generic Salutation & Spam Words', '🟡'),
-        'num_links': ('Hyperlink Volume & Risk Density', '🟡'),
+        'sender_domain_mismatch': ('Fake or Mismatched Sender Domain', '🔴'),
+        'cred_request_score': ('Asks for Passwords or Billing Info', '🔴'),
+        'html_form_present': ('Suspicious Link or Form in Email', '🔴'),
+        'urgency_score': ('High-Pressure or Urgent Language', '🟡'),
+        'poor_grammar_score': ('Generic Greeting or Spam Phrasing', '🟡'),
+        'num_links': ('External Links Included', '🟡'),
     }
     breakdown_by_feature = {b['feature']: b for b in feats.get('breakdown', [])}
 
@@ -322,6 +322,32 @@ def analyze_email(req: EmailRequest):
         'breakdown': feats.get('breakdown', []),
         'model_comparison': feats.get('model_comparison', {})
     }
+
+
+class GmailFetchRequest(BaseModel):
+    gmail_address: str = ""
+    app_password: str = ""
+    folder: str = "INBOX"
+    limit: int = 12
+
+
+@app.post("/api/gmail/messages")
+def gmail_messages(req: GmailFetchRequest):
+    """Fetches recent emails from Gmail via IMAP (App Password). Credentials are never stored."""
+    from src.features.gmail_imap import fetch_gmail_messages
+
+    address = req.gmail_address.strip() or os.environ.get('GMAIL_ADDRESS', '')
+    password = req.app_password.strip() or os.environ.get('GMAIL_APP_PASSWORD', '')
+    limit = max(1, min(req.limit, 30))
+    try:
+        messages = fetch_gmail_messages(address, password, folder=req.folder, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except ConnectionError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {'messages': messages}
 
 
 @app.get("/api/live-feed")

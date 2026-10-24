@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnScanEmail = document.getElementById('btn-scan-email');
   const btnTestPhishEmail = document.getElementById('btn-test-phish-email');
   const emailResult = document.getElementById('email-result');
-  
+
   // ─── 1. Tab Switching ───
   tabs.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -46,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ─── 3. Scan Triggers ───
+  // ─── 2. Scan Triggers ───
   btnScan.addEventListener('click', () => triggerScan(false));
   btnDeepScan.addEventListener('click', () => triggerScan(true));
 
@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ─── 4. Render Verdict ───
+  // ─── 3. Render URL Verdict ───
   function renderVerdict(data, isDeep = false) {
     resultSection.classList.remove('hidden');
 
@@ -208,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
     resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // ─── 5. Email Inspector ───
+  // ─── 4. Email Inspector ───
   btnTestPhishEmail.addEventListener('click', () => {
     emailSender.value = 'security-update@paypal-auth-center.xyz';
     emailClaimedOrg.value = 'PayPal';
@@ -245,146 +245,358 @@ PayPal Security Department`;
         body: JSON.stringify(payload)
       });
       const data = await resp.json();
-
-      emailResult.classList.remove('hidden');
-      const isSusp = data.is_suspicious;
-      emailResult.className = `email-result-box ${isSusp ? 'danger' : 'safe'}`;
-
-      let reasonsHtml = (data.reasons || []).map(r => `
-        <div class="page-signal-row" style="padding: 6px 0; border-bottom: 1px dashed rgba(0,0,0,0.08);">
-          <span><strong>${r.badge || ''} ${r.rule}</strong></span>
-          <span style="font-size: 12.5px; text-align: right; max-width: 65%;">${r.detail}</span>
-        </div>
-      `).join('');
-
-      const FEATURE_LABELS = {
-        sender_domain_mismatch: 'Sender Domain Spoofing',
-        cred_request_score: 'Credential Solicitation (Zone-Scaled)',
-        html_form_present: 'Malicious URL / Payload Structure',
-        urgency_score: 'Psychological Urgency (Zone-Scaled)',
-        poor_grammar_score: 'Generic Salutation & Spam Phrases',
-        num_links: 'Hyperlink Volume & Risk Density'
-      };
-
-      const breakdown = data.breakdown || [];
-      const mc = data.model_comparison || (data.features && data.features.model_comparison) || null;
-
-      const propRawSum = breakdown.reduce((s, b) => s + b.contribution, 0);
-      const synergyBonus = mc && mc.proposed_ahmfa ? mc.proposed_ahmfa.synergy_bonus : 0;
-      const propShStar = mc && mc.proposed_ahmfa ? mc.proposed_ahmfa.S_H_star : Math.min(100, propRawSum);
-      const baseSh = mc && mc.base_paper ? mc.base_paper.S_H : 0;
-
-      let comparisonCardsHtml = '';
-      if (mc && mc.base_paper && mc.proposed_ahmfa) {
-        const bp = mc.base_paper;
-        const pa = mc.proposed_ahmfa;
-        const legacyScore = mc.legacy_v1_score !== undefined ? mc.legacy_v1_score : 70;
-
-        comparisonCardsHtml = `
-          <div style="margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
-            <div style="background: rgba(255,255,255,0.85); border: 1px solid #d1d5db; border-radius: 8px; padding: 12px;">
-              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">
-                BASELINE &mdash; JADHAV & CHANDRE (2025) PAPER
-              </div>
-              <div style="font-size: 18px; font-weight: 800; color: #374151; margin: 4px 0;">
-                ${bp.final_score} / 100
-                <span style="font-size: 11px; font-weight: 500; color: #6b7280;">(Legacy v1: ${legacyScore}/100)</span>
-              </div>
-              <div style="font-family: monospace; font-size: 11.5px; color: #4b5563; line-height: 1.5;">
-                S<sub>H</sub> = &Sigma;(&alpha;<sub>i</sub> &middot; h<sub>i</sub>) = <strong>${bp.S_H}</strong> (Binary h<sub>i</sub> &isin; {0,1})<br>
-                S<sub>final</sub> = 0.50&middot;(${bp.S_H}) + 0.50&middot;(${bp.P_ML}) = <strong>${bp.final_score}</strong>
-              </div>
-              <div style="margin-top: 6px; font-size: 11px; color: #b45309;">
-                &#9888; Flaw: Binary h<sub>i</sub> = 1 stays flat when editing Subject words.
-              </div>
-            </div>
-
-            <div style="background: #ffffff; border: 2px solid #dc2626; border-radius: 8px; padding: 12px; box-shadow: 0 2px 6px rgba(220,38,38,0.08);">
-              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #dc2626; letter-spacing: 0.5px;">
-                PROPOSED MODEL &mdash; A-HMFA (OUR IMPROVEMENT)
-              </div>
-              <div style="font-size: 18px; font-weight: 800; color: #dc2626; margin: 4px 0;">
-                ${pa.final_score} / 100
-                <span style="font-size: 11px; font-weight: 600; color: #16a34a;">
-                  (&Delta; ${(pa.final_score - bp.final_score >= 0 ? '+' : '') + (pa.final_score - bp.final_score).toFixed(2)} vs Paper)
-                </span>
-              </div>
-              <div style="font-family: monospace; font-size: 11.5px; color: #1f2937; line-height: 1.5;">
-                S<sub>H</sub>* = &Sigma;(&alpha;<sub>i</sub> &middot; &phi;<sub>i</sub>) + &Psi;<sub>synergy</sub> = <strong>${pa.S_H_star}</strong><br>
-                S<sub>final</sub> = ${pa.beta_adaptive}&middot;(S<sub>H</sub>*) + ${(1 - pa.beta_adaptive).toFixed(3)}&middot;(P<sub>ML</sub>) = <strong>${pa.final_score}</strong>
-              </div>
-              <div style="margin-top: 6px; font-size: 11px; color: #15803d;">
-                &#10003; Log-Zone &phi;<sub>i</sub> (Subj 1.75&times;) + Cross-Domain Synergy (&Psi;) + Adaptive &beta;
-              </div>
-            </div>
-          </div>
-        `;
-      }
-
-      let breakdownHtml = '';
-      if (breakdown.length) {
-        const rows = breakdown.map(b => {
-          const hVal = b.binary_h !== undefined ? b.binary_h : (b.strength > 0 ? 1 : 0);
-          const basePts = b.base_contribution !== undefined ? b.base_contribution : (b.weight * hVal * 100);
-          return `
-            <tr>
-              <td><strong>${b.label || FEATURE_LABELS[b.feature] || b.feature}</strong></td>
-              <td style="text-align: center;">${b.weight.toFixed(2)}</td>
-              <td style="text-align: center; color: #6b7280;">${hVal} (${basePts.toFixed(1)})</td>
-              <td style="text-align: center; font-weight: 600; color: #dc2626;">${b.strength.toFixed(3)}</td>
-              <td style="text-align: right;"><strong>+${b.contribution.toFixed(2)}</strong></td>
-            </tr>
-          `;
-        }).join('');
-
-        const synergyRow = synergyBonus > 0
-          ? `<tr style="background: rgba(254, 226, 226, 0.45);">
-               <td colspan="4"><strong>Cross-Domain Attack Chain Synergy (&Psi;<sub>synergy</sub>)</strong> <em>(Spoof &times; URL + Urgency &times; Cred &times; URL)</em></td>
-               <td style="text-align: right; color: #dc2626;"><strong>+${synergyBonus.toFixed(2)}</strong></td>
-             </tr>`
-          : '';
-
-        breakdownHtml = `
-          <p class="formula-note" style="margin-top: 16px; font-weight: 600;">
-            Comparative Rule Breakdown: Base Paper Binary (h<sub>i</sub> &isin; {0,1}) vs. Proposed Continuous Zone-Density (&phi;<sub>i</sub> &isin; [0,1])
-          </p>
-          <table class="breakdown-table" style="width: 100%; border-collapse: collapse; margin-top: 6px; background: rgba(255,255,255,0.9); border-radius: 6px; overflow: hidden;">
-            <thead>
-              <tr style="border-bottom: 2px solid rgba(0,0,0,0.1); text-align: left;">
-                <th style="padding: 8px;">Multi-Domain Indicator</th>
-                <th style="padding: 8px; text-align: center;">Weight (&alpha;<sub>i</sub>)</th>
-                <th style="padding: 8px; text-align: center;">Paper Binary h<sub>i</sub> (Pts)</th>
-                <th style="padding: 8px; text-align: center;">Proposed &phi;<sub>i</sub> (0&ndash;1)</th>
-                <th style="padding: 8px; text-align: right;">Proposed Pts</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows}
-              ${synergyRow}
-              <tr class="breakdown-total" style="border-top: 2px solid rgba(0,0,0,0.15); font-weight: 700;">
-                <td colspan="2" style="padding: 8px;">Heuristic Subtotal (S<sub>H</sub> vs. S<sub>H</sub>*)</td>
-                <td style="padding: 8px; text-align: center; color: #4b5563;">${baseSh.toFixed(1)} / 100</td>
-                <td style="padding: 8px; text-align: center;">&mdash;</td>
-                <td style="padding: 8px; text-align: right; color: #dc2626;">${propShStar.toFixed(2)} / 100</td>
-              </tr>
-            </tbody>
-          </table>
-        `;
-      }
-
-      emailResult.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap;">
-          <h4>${isSusp ? 'High-Risk Phishing Email Detected' : 'Low Threat — Normal Communication'}</h4>
-          <p style="margin: 0; font-size: 14px; color: var(--text-secondary);">
-            Final Hybrid Risk Score: <strong style="font-size: 17px; color: ${isSusp ? '#dc2626' : '#16a34a'};">${data.risk_score} / 100</strong>
-          </p>
-        </div>
-        ${comparisonCardsHtml}
-        <div style="margin-top: 14px;">${reasonsHtml}</div>
-        ${breakdownHtml}
-      `;
+      renderEmailAnalysis(data);
     } catch (e) {
       alert('Error analyzing email: ' + e.message);
     }
   });
+
+  // ─── 4b. Gmail Inbox Picker (IMAP + App Password) ───
+  const gmailAddress = document.getElementById('gmail-address');
+  const gmailPassword = document.getElementById('gmail-app-password');
+  const gmailFolder = document.getElementById('gmail-folder');
+  const btnGmailConnect = document.getElementById('btn-gmail-connect');
+  const gmailStatus = document.getElementById('gmail-status');
+  const gmailList = document.getElementById('gmail-list');
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function setGmailStatus(msg, isError) {
+    gmailStatus.textContent = msg;
+    gmailStatus.className = 'gmail-status' + (isError ? ' error' : '');
+  }
+
+  btnGmailConnect.addEventListener('click', async () => {
+    setGmailStatus('Connecting to Gmail...', false);
+    gmailList.classList.add('hidden');
+    btnGmailConnect.disabled = true;
+    try {
+      const resp = await fetch('/api/gmail/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gmail_address: gmailAddress.value.trim(),
+          app_password: gmailPassword.value,
+          folder: gmailFolder.value,
+          limit: 12
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Could not load emails');
+
+      const msgs = data.messages || [];
+      if (!msgs.length) {
+        setGmailStatus('No emails found in this folder.', false);
+        return;
+      }
+      setGmailStatus(`Loaded ${msgs.length} recent emails. Click "Scan" on one to analyze it.`, false);
+      gmailList.innerHTML = msgs.map((m, i) => `
+        <div class="gmail-item">
+          <div class="gmail-item-main">
+            <div class="gmail-item-top">
+              <span class="gmail-item-sender">${escapeHtml(m.sender_name)} &lt;${escapeHtml(m.sender_email)}&gt;</span>
+              <span>${escapeHtml(m.date)}</span>
+            </div>
+            <div class="gmail-item-subject">${escapeHtml(m.subject)}</div>
+            <div class="gmail-item-snippet">${escapeHtml(m.snippet)}</div>
+          </div>
+          <button class="btn-primary gmail-scan-btn" data-idx="${i}">Scan</button>
+        </div>
+      `).join('');
+      gmailList.classList.remove('hidden');
+
+      gmailList.querySelectorAll('.gmail-scan-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const m = msgs[Number(btn.dataset.idx)];
+          emailSender.value = m.sender_email;
+          emailClaimedOrg.value = m.claimed_org || '';
+          emailSubject.value = m.subject;
+          emailBody.value = m.body;
+          btnScanEmail.click();
+        });
+      });
+    } catch (e) {
+      setGmailStatus(e.message, true);
+    } finally {
+      btnGmailConnect.disabled = false;
+    }
+  });
+
+  function renderEmailAnalysis(data) {
+    emailResult.classList.remove('hidden');
+    emailResult.className = 'email-analysis-dashboard';
+
+    const isSusp = data.is_suspicious;
+    const score = Number(data.risk_score || 0);
+    const feats = data.features || {};
+    const breakdown = data.breakdown || [];
+    const mc = data.model_comparison || (feats && feats.model_comparison) || {};
+    const pa = mc.proposed_ahmfa || {};
+
+    const FRIENDLY_NAMES = {
+      sender_domain_mismatch: 'Sender Identity & Domain',
+      cred_request_score: 'Sensitive Info Requests',
+      html_form_present: 'Suspicious Links & Forms',
+      urgency_score: 'Urgent or Pressuring Tone',
+      poor_grammar_score: 'Generic Greetings & Spam Phrases',
+      num_links: 'External Link Risk'
+    };
+
+    const SEGMENT_COLORS = {
+      sender_domain_mismatch: '#B91C1C',
+      cred_request_score: '#0F1E36',
+      html_form_present: '#1463F3',
+      urgency_score: '#D97706',
+      poor_grammar_score: '#475569',
+      num_links: '#0D9488'
+    };
+
+    // 1. Circular SVG Donut Gauge calculation
+    const radius = 38;
+    const circumference = 2 * Math.PI * radius;
+    const clampedScore = Math.min(Math.max(score, 0), 100);
+    const dashOffset = circumference - (clampedScore / 100) * circumference;
+    const gaugeColor = score >= 50 ? '#B91C1C' : (score >= 30 ? '#B45309' : '#15803D');
+
+    const verdictIconSvg = isSusp
+      ? '<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+      : '<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>';
+
+    const summaryText = isSusp
+      ? 'This email shows clear warning signs of phishing (such as a mismatched sender address, pressure tactics, or requests for private information). Do not click any links or reply.'
+      : 'This email passed our core security checks and does not show common phishing red flags.';
+
+    // 2. Category Bar Chart HTML (Graph 1)
+    const categoryBarsHtml = breakdown.map(b => {
+      const maxPts = Math.round((b.weight || 0) * 100);
+      const earnedPts = Number(b.contribution || 0);
+      const pctOfCategory = Math.min(100, Math.round((b.strength || 0) * 100));
+
+      let statusClass = 'safe';
+      let statusLabel = 'PASSED';
+      if (pctOfCategory >= 60) {
+        statusClass = 'danger';
+        statusLabel = 'HIGH RISK';
+      } else if (pctOfCategory > 0) {
+        statusClass = 'warning';
+        statusLabel = 'ELEVATED';
+      }
+
+      const name = FRIENDLY_NAMES[b.feature] || b.label || b.feature;
+
+      return `
+        <div class="email-bar-item ${statusClass}">
+          <div class="email-bar-header">
+            <span class="email-bar-title">${name}</span>
+            <div class="email-bar-meta">
+              <span class="email-status-text ${statusClass}">&#9632; ${statusLabel}</span>
+              <span class="email-bar-pts">+${earnedPts.toFixed(1)} <small>/ ${maxPts} pts</small></span>
+            </div>
+          </div>
+          <div class="email-bar-track">
+            <div class="email-bar-fill ${statusClass}" style="width: ${Math.max(pctOfCategory, pctOfCategory > 0 ? 5 : 0)}%;"></div>
+          </div>
+          <p class="email-bar-reason">${b.reason || ''}</p>
+        </div>
+      `;
+    }).join('');
+
+    // 2b. Live Sender Verification Readout (Disify MX/Disposable API + WHOIS)
+    const si = feats.sender_intel || {};
+    let senderIntelHtml = '';
+    if (si && si.domain) {
+      const mxStatus = si.has_mx_records === true
+        ? '<strong style="color: var(--safe);">&#9632; Active Mail Server Verified (MX OK)</strong>'
+        : '<strong style="color: var(--danger);">&#9632; No Mail Server Found (MX Failed)</strong>';
+      const dispStatus = si.is_disposable
+        ? '<strong style="color: var(--danger);">&#9632; Flagged as Disposable / Burner Email</strong>'
+        : '<strong style="color: var(--safe);">&#9632; Standard Non-Disposable Domain</strong>';
+      const domainStatusColor = (si.risk_severity || 0) >= 0.7 ? 'var(--danger)' : 'var(--text-primary)';
+
+      senderIntelHtml = `
+        <div class="page-scan-details" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border);">
+          <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">Live Sender Domain &amp; Mail Server Verification</h4>
+          <div class="page-signals">
+            <div class="page-signal-row"><span>Sender Domain</span><strong>${si.domain}</strong></div>
+            <div class="page-signal-row"><span>Mail Server (Disify MX)</span>${mxStatus}</div>
+            <div class="page-signal-row"><span>Burner / Temp-Mail Check</span>${dispStatus}</div>
+            <div class="page-signal-row"><span>WHOIS Domain Status</span><strong style="color: ${domainStatusColor};">${si.domain_status || 'Unknown'}</strong></div>
+            <div class="page-signal-row"><span>Domain Registrar</span><strong>${si.registrar || 'Unregistered / Hidden'}</strong></div>
+          </div>
+        </div>
+      `;
+    }
+
+    // 3. Stacked Score Distribution Bar & Simple Calculation Breakdown (Graph 2)
+    const totalEarnedPts = breakdown.reduce((sum, b) => sum + (b.contribution || 0), 0);
+    const synergyPts = Number(pa.synergy_bonus || 0);
+    const ruleScore = Number(pa.S_H_star !== undefined ? pa.S_H_star : Math.min(100, totalEarnedPts));
+    const wordDensityScore = Number(pa.P_ML !== undefined ? pa.P_ML : 28);
+    const ruleWeightPct = Math.round((pa.beta_adaptive !== undefined ? pa.beta_adaptive : 0.6) * 100);
+    const densityWeightPct = 100 - ruleWeightPct;
+
+    const totalForStack = Math.max(totalEarnedPts + synergyPts, 1);
+    const stackedSegmentsHtml = breakdown
+      .filter(b => b.contribution > 0)
+      .map(b => {
+        const widthPct = Math.max(4, (b.contribution / totalForStack) * 100);
+        const color = SEGMENT_COLORS[b.feature] || '#1463F3';
+        const name = FRIENDLY_NAMES[b.feature] || b.label;
+        return `<div class="stack-segment" style="width: ${widthPct}%; background: ${color};" title="${name}: +${b.contribution.toFixed(1)} pts"></div>`;
+      }).join('');
+
+    const legendHtml = breakdown
+      .filter(b => b.contribution > 0)
+      .map(b => {
+        const color = SEGMENT_COLORS[b.feature] || '#1463F3';
+        const name = FRIENDLY_NAMES[b.feature] || b.label;
+        return `
+          <span class="stack-legend-item">
+            <span class="stack-dot" style="background: ${color};"></span>
+            ${name} (<strong>+${b.contribution.toFixed(1)}</strong>)
+          </span>
+        `;
+      }).join('');
+
+    const totalFlaggedWords = (feats.urgency_score || 0) + (feats.cred_request_score || 0) + (feats.poor_grammar_score || 0);
+    const totalWords = feats.word_count || 1;
+
+    // 4. Key Takeaways / Red Flags for the User
+    const reasons = data.reasons || [];
+    const takeawaysHtml = reasons.length > 0
+      ? reasons.map(r => {
+          const isCrit = r.badge === '🔴';
+          return `
+            <div class="reason-item ${isCrit ? 'critical' : 'warning'}">
+              <div class="reason-left">
+                <span class="reason-dot"></span>
+                <div>
+                  <strong style="display: block; font-size: 13px; color: var(--text-primary);">${r.rule}</strong>
+                  <span style="font-size: 12.5px; color: var(--text-secondary);">${r.detail}</span>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')
+      : `
+        <div class="reason-item safe">
+          <div class="reason-left">
+            <span class="reason-dot"></span>
+            <span>No suspicious indicators were triggered in the sender address, subject, or message body.</span>
+          </div>
+        </div>
+      `;
+
+    emailResult.innerHTML = `
+      <!-- Top Verdict Banner with SVG Gauge -->
+      <div class="verdict-banner ${isSusp ? 'danger' : 'safe'}" style="margin-top: 24px;">
+        <div class="verdict-left">
+          <div class="verdict-indicator">${verdictIconSvg}</div>
+          <div>
+            <div class="verdict-tag">${isSusp ? 'PHISHING DETECTED' : 'SAFE EMAIL'}</div>
+            <h2 class="verdict-title">${isSusp ? 'High-Risk Phishing Email' : 'Low Threat — Looks Safe'}</h2>
+            <p class="email-verdict-summary">${summaryText}</p>
+          </div>
+        </div>
+        <div class="email-gauge-box">
+          <svg class="email-gauge-svg" width="96" height="96" viewBox="0 0 96 96">
+            <circle cx="48" cy="48" r="${radius}" fill="none" stroke="rgba(0,0,0,0.08)" stroke-width="8" />
+            <circle cx="48" cy="48" r="${radius}" fill="none" stroke="${gaugeColor}" stroke-width="8"
+              stroke-linecap="round"
+              stroke-dasharray="${circumference.toFixed(1)}"
+              stroke-dashoffset="${dashOffset.toFixed(1)}"
+              transform="rotate(-90 48 48)" />
+          </svg>
+          <div class="email-gauge-text">
+            <span class="email-gauge-num" style="color: ${gaugeColor};">${Math.round(score)}</span>
+            <span class="email-gauge-sub">/ 100</span>
+          </div>
+          <span class="email-gauge-caption">Risk Score</span>
+        </div>
+      </div>
+
+      <!-- Two-Column Visual Breakdown -->
+      <div class="results-grid">
+        <!-- Left Card: Visual Bar Graph of the 6 Checks -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Risk Breakdown by Category</h3>
+            <span class="chip-badge">6 Security Checks</span>
+          </div>
+          <p class="section-desc">Each bar shows how many risk points were triggered in that category out of its maximum weight.</p>
+          <div class="email-bars-container">
+            ${categoryBarsHtml}
+          </div>
+          ${senderIntelHtml}
+        </div>
+
+        <!-- Right Card: How It Was Calculated + What You Should Know -->
+        <div class="card">
+          <div class="card-header">
+            <h3>How the Score Was Calculated</h3>
+            <span class="chip-badge">Plain-English Summary</span>
+          </div>
+          <p class="section-desc">Your final risk score combines our 6 security rule checks with an analysis of the email's language density.</p>
+
+          ${totalEarnedPts > 0 ? `
+            <div class="stack-chart-box">
+              <div class="stack-chart-label">Share of Triggered Risk Points</div>
+              <div class="stack-bar-track">${stackedSegmentsHtml}</div>
+              <div class="stack-legend">${legendHtml}</div>
+            </div>
+          ` : ''}
+
+          <!-- 3 Simple Calculation Steps Visual -->
+          <div class="calc-steps-box">
+            <div class="calc-step">
+              <div class="calc-step-left">
+                <span class="calc-step-num">1</span>
+                <div>
+                  <strong>6 Security Rule Checks</strong>
+                  <p>Points from the 6 checks on the left (${totalEarnedPts.toFixed(1)} pts)${synergyPts > 0 ? ` + ${synergyPts.toFixed(1)} bonus pts because multiple red flags appeared together` : ''}, scaled smoothly to 100.</p>
+                </div>
+              </div>
+              <span class="calc-step-val">${ruleScore.toFixed(1)} <small>/ 100</small></span>
+            </div>
+
+            <div class="calc-step">
+              <div class="calc-step-left">
+                <span class="calc-step-num">2</span>
+                <div>
+                  <strong>Suspicious Word Density</strong>
+                  <p>Found <strong>${totalFlaggedWords}</strong> pressure/login phrase(s) across <strong>${totalWords}</strong> total words in the email.</p>
+                </div>
+              </div>
+              <span class="calc-step-val">${wordDensityScore.toFixed(1)} <small>/ 100</small></span>
+            </div>
+
+            <div class="calc-step calc-step-final">
+              <div class="calc-step-left">
+                <span class="calc-step-num final">=</span>
+                <div>
+                  <strong>Final Combined Risk Score</strong>
+                  <p>Blends <strong>${ruleWeightPct}%</strong> Rule Checks + <strong>${densityWeightPct}%</strong> Word Density. Scores <strong>50+</strong> are flagged as phishing.</p>
+                </div>
+              </div>
+              <span class="calc-step-val" style="color: ${gaugeColor};">${score.toFixed(1)} <small>/ 100</small></span>
+            </div>
+          </div>
+
+          <!-- Key Takeaways -->
+          <div style="margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border);">
+            <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">What You Should Know</h4>
+            <div class="reasons-list">
+              ${takeawaysHtml}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    emailResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 });

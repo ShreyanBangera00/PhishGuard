@@ -1,12 +1,13 @@
 """
 Email Feature Extraction Module for PhishGuard.
-Upgraded with A-HMFA v4: Non-linear sigmoidal scaling to prevent premature
-score saturation at 100 when email bodies contain dense keyword payloads.
+Combines live Sender Verification (Disify DNS MX / Disposable API + WHOIS Domain Age)
+with multi-factor heuristic and language-density analysis.
 """
 
 import math
 import re
 from urllib.parse import urlparse
+from src.features.network_intel import verify_sender_live
 
 URGENCY_KEYWORDS = [
     'urgent', 'immediately', 'expires', 'act now', 'suspended',
@@ -54,12 +55,12 @@ WEIGHTS = {
 assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-6, "WEIGHTS must sum to 1.0"
 
 FEATURE_LABELS = {
-    'sender_domain_mismatch': 'Sender Domain Spoofing',
-    'cred_request_score': 'Credential Solicitation',
-    'html_form_present': 'Embedded Payload / Malicious Link Structure',
-    'urgency_score': 'Psychological Urgency (Zone-Weighted)',
-    'poor_grammar_score': 'Generic Salutation & Spam Phrases',
-    'num_links': 'Hyperlink Volume & Risk Density',
+    'sender_domain_mismatch': 'Sender Identity & Domain',
+    'cred_request_score': 'Sensitive Info Requests',
+    'html_form_present': 'Suspicious Links & Forms',
+    'urgency_score': 'Urgent or Pressuring Tone',
+    'poor_grammar_score': 'Generic Greetings & Spam Phrases',
+    'num_links': 'External Link Risk',
 }
 
 
@@ -70,10 +71,6 @@ def _normalize(count, cap):
 
 
 def _log_zone_strength(subj_count: int, body_count: int, tau: float, subj_bonus: float = 0.0) -> float:
-    """
-    A-HMFA zone-weighted activation function phi_i with wider headroom (tau=18.0)
-    to ensure subject line edits create measurable variance before saturation.
-    """
     weighted_density = (2.0 * subj_count) + (1.0 * body_count) + subj_bonus
     if weighted_density <= 0:
         return 0.0
@@ -98,25 +95,27 @@ def _evaluate_url_risk(extracted_urls: list, claimed_org: str) -> tuple[float, l
             reasons.append("unencrypted HTTP link")
         if any(host.endswith(tld) for tld in HIGH_RISK_TLDS):
             u_score += 0.30
-            reasons.append(f"high-risk TLD ({host.split('.')[-1]})")
+            reasons.append(f"risky domain extension (.{host.split('.')[-1]})")
         if any(tok in path_query for tok in ['update', 'login', 'verify', 'session=', 'account', 'auth']):
             u_score += 0.20
-            reasons.append("credential/session harvesting URL path")
+            reasons.append("login/account verification link path")
         if org_clean and org_clean in host and not host.endswith(f"{org_clean}.com"):
             u_score += 0.25
-            reasons.append(f"deceptive brand-spoofed URL host ({host})")
+            reasons.append(f"fake lookalike domain ({host})")
 
         max_risk = max(max_risk, min(1.0, u_score))
 
     return round(max_risk, 3), list(dict.fromkeys(reasons))
 
 
-def _check_domain_mismatch(sender: str, claimed_org: str) -> tuple[int, float, str]:
-    if not claimed_org:
-        return 0, 0.0, "No claimed organization provided; domain not checked"
+def _check_domain_mismatch(sender: str, claimed_org: str, sender_intel: dict) -> tuple[int, float, str]:
+    if not sender:
+        if not claimed_org:
+            return 0, 0.0, "No sender address provided"
+        return 1, 1.0, "Sender address is missing"
 
     if '@' not in sender:
-        return 1, 1.0, "Sender address has no domain to verify"
+        return 1, 1.0, "Sender address is missing a valid email domain"
 
     sender_domain = sender.split('@')[-1].strip().lower()
     org_key = claimed_org.strip().lower()
@@ -124,29 +123,57 @@ def _check_domain_mismatch(sender: str, claimed_org: str) -> tuple[int, float, s
     tld_penalty = 0.15 if any(sender_domain.endswith(t) for t in HIGH_RISK_TLDS) else 0.0
     hyphen_penalty = min(0.15, sender_domain.count('-') * 0.075)
 
-    official = OFFICIAL_DOMAINS.get(org_key)
-    if official:
-        is_official = any(
-            sender_domain == d or sender_domain.endswith(f'.{d}')
-            for d in official
-        )
-        if is_official:
-            return 0, 0.0, f"Sender domain '{sender_domain}' matches official {claimed_org} domain"
-        severity = min(1.0, 0.80 + tld_penalty + hyphen_penalty) if org_key in sender_domain else min(1.0, 0.75 + tld_penalty)
-        return 1, round(severity, 3), (
-            f"Sender domain '{sender_domain}' spoofs '{claimed_org}' and does not match official "
-            f"domain ({', '.join(official)})"
-        )
+    live_severity = float(sender_intel.get('risk_severity', 0.0))
+    live_findings = sender_intel.get('findings', [])
+    domain_status = sender_intel.get('domain_status', 'Unknown')
 
-    bare_domain = sender_domain.split('.')[0]
-    if org_key in sender_domain and bare_domain != org_key:
-        severity = min(1.0, 0.85 + tld_penalty + hyphen_penalty)
-        return 1, round(severity, 3), f"Lookalike domain '{sender_domain}' embeds brand '{org_key}' with deceptive affixes"
-    if org_key not in sender_domain:
-        severity = min(1.0, 0.75 + tld_penalty + hyphen_penalty)
-        return 1, round(severity, 3), f"Sender domain '{sender_domain}' bears no relation to claimed org '{claimed_org}'"
+    # 1. If Claimed Organization is provided, check alignment + live domain status
+    if org_key:
+        official = OFFICIAL_DOMAINS.get(org_key)
+        if official:
+            is_official = any(
+                sender_domain == d or sender_domain.endswith(f'.{d}')
+                for d in official
+            )
+            if is_official and live_severity == 0.0:
+                return 0, 0.0, f"Verified official {claimed_org} domain ({sender_domain}) — {domain_status}"
+            if not is_official:
+                severity = min(1.0, max(live_severity, 0.80 + tld_penalty + hyphen_penalty if org_key in sender_domain else 0.75 + tld_penalty))
+                extra_live = f" [{'; '.join(live_findings)}]" if live_findings else ""
+                return 1, round(severity, 3), (
+                    f"Sender uses '{sender_domain}' instead of official {claimed_org} domain ({', '.join(official)}){extra_live}"
+                )
 
-    return 0, 0.0, f"Sender domain '{sender_domain}' appears to match claimed org '{claimed_org}'"
+        bare_domain = sender_domain.split('.')[0]
+        if org_key in sender_domain and bare_domain != org_key:
+            severity = min(1.0, max(live_severity, 0.85 + tld_penalty + hyphen_penalty))
+            extra_live = f" [{'; '.join(live_findings)}]" if live_findings else ""
+            return 1, round(severity, 3), f"Lookalike domain '{sender_domain}' mimics '{claimed_org}'{extra_live}"
+        if org_key not in sender_domain:
+            severity = min(1.0, max(live_severity, 0.75 + tld_penalty + hyphen_penalty))
+            extra_live = f" [{'; '.join(live_findings)}]" if live_findings else ""
+            return 1, round(severity, 3), f"Sender domain '{sender_domain}' does not match '{claimed_org}'{extra_live}"
+
+    # 2. Even if Claimed Org is blank (or matched name), check Live Disify MX / Disposable / WHOIS findings
+    if live_severity > 0.0:
+        severity = min(1.0, live_severity + tld_penalty + hyphen_penalty)
+        reason_str = "; ".join(live_findings) if live_findings else f"Suspicious sender domain '{sender_domain}' ({domain_status})"
+        return 1, round(severity, 3), reason_str
+
+    if tld_penalty > 0 or hyphen_penalty >= 0.15:
+        severity = min(1.0, 0.65 + tld_penalty + hyphen_penalty)
+        return 1, round(severity, 3), f"Sender domain '{sender_domain}' uses high-risk extension or excessive hyphens ({domain_status})"
+
+    return 0, 0.0, f"Verified active mail domain '{sender_domain}' ({domain_status})"
+
+
+def _format_hit_list(hits: list, empty_msg: str, prefix: str) -> str:
+    unique_hits = list(dict.fromkeys(hits))
+    if not unique_hits:
+        return empty_msg
+    quoted = ', '.join(f'"{w}"' for w in unique_hits[:5])
+    more = f" (+{len(unique_hits) - 5} more)" if len(unique_hits) > 5 else ""
+    return f"{prefix}: {quoted}{more}"
 
 
 def extract_email_features(email_data: dict) -> dict:
@@ -160,7 +187,23 @@ def extract_email_features(email_data: dict) -> dict:
     body_lower = body.lower()
     full_text = f"{subj_lower} {body_lower}"
 
-    sender_domain_mismatch, domain_severity, domain_reason = _check_domain_mismatch(sender, claimed_org)
+    # Live Sender Verification (Disify MX/Disposable API + Live WHOIS Domain Age)
+    sender_intel = verify_sender_live(sender) if sender else {
+        'email': '',
+        'domain': None,
+        'format_valid': False,
+        'has_mx_records': None,
+        'is_disposable': False,
+        'ip_address': None,
+        'registrar': None,
+        'creation_date': None,
+        'domain_age_days': None,
+        'domain_status': 'Not Provided',
+        'risk_severity': 0.0,
+        'findings': []
+    }
+
+    sender_domain_mismatch, domain_severity, domain_reason = _check_domain_mismatch(sender, claimed_org, sender_intel)
 
     link_matches = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', body, re.IGNORECASE)
     extracted_urls = list(set(link_matches))
@@ -209,11 +252,31 @@ def extract_email_features(email_data: dict) -> dict:
 
     rule_evidence = {
         'sender_domain_mismatch': domain_reason,
-        'cred_request_score': f"Subject ({len(cred_subj_hits)}×2.0): {cred_subj_hits} | Body ({len(cred_body_hits)}×1.0): {cred_body_hits}",
-        'html_form_present': f"Malicious URL/Form indicators: {', '.join(url_reasons)}" if url_reasons else ("HTML form detected" if html_form_present else "No inline form/payload"),
-        'urgency_score': f"Subject ({len(urg_subj_hits)}×2.0): {urg_subj_hits} | Body ({len(urg_body_hits)}×1.0): {urg_body_hits}",
-        'poor_grammar_score': f"Detected {poor_grammar_score} generic/spam phrase(s): {gram_subj_hits + gram_body_hits}",
-        'num_links': f"{num_links} URL(s) extracted (URL threat density={url_threat_phi})",
+        'cred_request_score': _format_hit_list(
+            cred_subj_hits + cred_body_hits,
+            "No requests for passwords, banking, or login details found",
+            "Asks for sensitive info"
+        ),
+        'html_form_present': (
+            f"Suspicious link traits: {', '.join(url_reasons)}"
+            if url_reasons
+            else ("Contains embedded HTML form asking for input" if html_form_present else "No dangerous links or embedded forms found")
+        ),
+        'urgency_score': _format_hit_list(
+            urg_subj_hits + urg_body_hits,
+            "Calm tone — no pressure or urgency words detected",
+            "Uses high-pressure words"
+        ),
+        'poor_grammar_score': _format_hit_list(
+            gram_subj_hits + gram_body_hits,
+            "No generic greetings or spam phrases detected",
+            "Uses generic/spam phrases"
+        ),
+        'num_links': (
+            f"Found {num_links} link(s) in email body"
+            if num_links > 0
+            else "No external links in email body"
+        ),
     }
 
     breakdown = []
@@ -246,10 +309,7 @@ def extract_email_features(email_data: dict) -> dict:
     urg_phi = proposed_strengths_phi['urgency_score']
     cred_phi = proposed_strengths_phi['cred_request_score']
 
-    # Controlled synergy factor
     psi_synergy = round((6.0 * spoof_phi * url_phi) + (4.0 * urg_phi * cred_phi * url_phi), 2)
-    
-    # Non-linear sigmoidal mapping to prevent flat 100 ceilings
     combined_metric = proposed_raw_sh + psi_synergy
     proposed_sh_star = round(100.0 * (1.0 - math.exp(-combined_metric / 75.0)), 2)
     base_sh = round(min(100.0, base_sh), 2)
@@ -269,6 +329,7 @@ def extract_email_features(email_data: dict) -> dict:
     return {
         'sender_domain_mismatch': sender_domain_mismatch,
         'sender_domain_reason': domain_reason,
+        'sender_intel': sender_intel,
         'num_links': num_links,
         'extracted_urls': extracted_urls,
         'urgency_score': urgency_score,
