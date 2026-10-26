@@ -27,6 +27,7 @@ if ROOT_DIR not in sys.path:
 
 from src.features.url_features import extract_url_features
 from src.features.email_features import extract_email_features
+from src.features.attachment_scanner import scan_attachment, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES
 from src.features.network_intel import get_network_intel
 from src.scraper.page_analyzer import analyze_page, check_ssrf_safe, SSRFSecurityError
 from src.explainability.explainer import explain_prediction
@@ -98,6 +99,17 @@ class EmailRequest(BaseModel):
     claimed_org: str = ""
     body: str = ""
     has_attachment: bool = False
+    attachment_reports: List[Dict[str, Any]] = []
+
+
+class AttachmentUpload(BaseModel):
+    filename: str
+    content_type: str = ""
+    data_b64: str = ""
+
+
+class AttachmentScanRequest(BaseModel):
+    files: List[AttachmentUpload] = []
 
 
 class PredictionResponse(BaseModel):
@@ -278,6 +290,7 @@ def analyze_email(req: EmailRequest):
         'urgency_score': ('High-Pressure or Urgent Language', '🟡'),
         'poor_grammar_score': ('Generic Greeting or Spam Phrasing', '🟡'),
         'num_links': ('External Links Included', '🟡'),
+        'attachment_risk': ('Risky Attachment', '🔴'),
     }
     breakdown_by_feature = {b['feature']: b for b in feats.get('breakdown', [])}
 
@@ -306,9 +319,21 @@ def analyze_email(req: EmailRequest):
         _add_reason('poor_grammar_score', f"Detected {feats['poor_grammar_score']} common spam/phishing phrases")
     if feats['num_links'] > 0:
         _add_reason('num_links', f"Detected {feats['num_links']} external hyperlink(s) in email body")
+    if breakdown_by_feature.get('attachment_risk', {}).get('strength', 0) > 0:
+        _add_reason('attachment_risk', "Attachment shows signs of malware or credential theft")
 
     risk_score = feats['email_risk_score']
     if has_malicious_link:
+        risk_score = max(risk_score, 95.0)
+
+    # Confirmed-malicious attachment (VirusTotal consensus or a flagged link inside the file)
+    attachment_confirmed = bool(feats.get('attachment_confirmed_malicious'))
+    if attachment_confirmed:
+        reasons.insert(0, {
+            'rule': 'Attachment Confirmed Malicious',
+            'badge': '🔴',
+            'detail': 'An attachment was flagged as malicious by VirusTotal or contains a link flagged by Google Safe Browsing',
+        })
         risk_score = max(risk_score, 95.0)
 
     is_suspicious = bool(risk_score >= 50)
@@ -320,8 +345,39 @@ def analyze_email(req: EmailRequest):
         'features': feats,
         'reasons': reasons,
         'breakdown': feats.get('breakdown', []),
+        'attachments': req.attachment_reports,
         'model_comparison': feats.get('model_comparison', {})
     }
+
+
+def _scan_and_enrich_attachment(filename: str, data: bytes, content_type: str = "", too_large: bool = False, size: int = None) -> Dict[str, Any]:
+    """
+    Runs the static attachment scan, then checks any URLs found inside the file
+    against Google Safe Browsing. A flagged link marks the attachment as confirmed malicious.
+    """
+    if too_large:
+        report = scan_attachment(filename, b"", content_type)
+        report['size'] = size if size is not None else 0
+        report['skipped'] = f'File is larger than {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB and was not scanned'
+        report['verdict'] = 'Not scanned'
+        return report
+
+    report = scan_attachment(filename, data, content_type)
+    for url in report.get('urls', [])[:5]:
+        try:
+            ti = threat_service.lookup_url(url)
+        except Exception:
+            continue
+        if ti.get('any_threat_found'):
+            report['findings'].append({
+                'severity': 'critical',
+                'text': f"Contains a link flagged by Google Safe Browsing: {url}",
+            })
+            report['confirmed_malicious'] = True
+            report['risk'] = 1.0
+            report['verdict'] = 'Malicious'
+            break
+    return report
 
 
 class GmailFetchRequest(BaseModel):
@@ -329,6 +385,28 @@ class GmailFetchRequest(BaseModel):
     app_password: str = ""
     folder: str = "INBOX"
     limit: int = 12
+
+
+@app.post("/api/scan-attachments")
+def scan_attachments(req: AttachmentScanRequest):
+    """Scans files uploaded from the browser. Files are processed in memory and discarded."""
+    import base64
+    import binascii
+
+    if len(req.files) > MAX_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"A maximum of {MAX_ATTACHMENTS} files can be scanned at once")
+
+    reports = []
+    for f in req.files:
+        try:
+            data = base64.b64decode(f.data_b64, validate=False)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail=f"Could not read file '{f.filename}'")
+        reports.append(_scan_and_enrich_attachment(
+            f.filename, data if len(data) <= MAX_ATTACHMENT_BYTES else b"",
+            f.content_type, too_large=len(data) > MAX_ATTACHMENT_BYTES, size=len(data),
+        ))
+    return {'reports': reports}
 
 
 @app.post("/api/gmail/messages")
@@ -347,6 +425,17 @@ def gmail_messages(req: GmailFetchRequest):
         raise HTTPException(status_code=401, detail=str(e))
     except ConnectionError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    # Scan each message's attachments in memory, then drop the raw bytes before responding
+    for m in messages:
+        raw_list = m.pop('raw_attachments', [])
+        m['attachment_reports'] = [
+            _scan_and_enrich_attachment(
+                a['filename'], a['data'], a['content_type'],
+                too_large=a.get('too_large', False), size=a.get('size'),
+            )
+            for a in raw_list
+        ]
     return {'messages': messages}
 
 

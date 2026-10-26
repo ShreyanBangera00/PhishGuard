@@ -155,6 +155,15 @@
           <textarea id="email-body" rows="6" placeholder="Paste the full email content here..."></textarea>
         </div>
 
+                <div class="form-group">
+          <label>Attachments <span class="label-hint">(optional, scanned in memory and never stored)</span></label>
+          <div class="attach-row">
+            <input type="file" id="email-attachments" multiple>
+            <button type="button" id="btn-clear-attachments" class="btn-secondary hidden">Clear</button>
+          </div>
+          <div id="attachment-status" class="attach-status hidden"></div>
+        </div>
+
         <div class="form-actions">
           <button id="btn-test-phish-email" class="btn-secondary">Load Sample</button>
           <button id="btn-scan-email" class="btn-primary">Analyze Email</button>

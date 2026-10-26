@@ -8,6 +8,7 @@ import math
 import re
 from urllib.parse import urlparse
 from src.features.network_intel import verify_sender_live
+from src.features.attachment_scanner import summarize_reports
 
 URGENCY_KEYWORDS = [
     'urgent', 'immediately', 'expires', 'act now', 'suspended',
@@ -44,7 +45,8 @@ OFFICIAL_DOMAINS = {
     'instagram': ['instagram.com'],
 }
 
-WEIGHTS = {
+# Weights of the six original checks. These are used as-is when the email has no attachments.
+BASE_WEIGHTS = {
     'sender_domain_mismatch': 0.30,
     'cred_request_score': 0.25,
     'html_form_present': 0.15,
@@ -52,7 +54,22 @@ WEIGHTS = {
     'poor_grammar_score': 0.10,
     'num_links': 0.05,
 }
+assert abs(sum(BASE_WEIGHTS.values()) - 1.0) < 1e-6, "BASE_WEIGHTS must sum to 1.0"
+
+# Attachment Risk is a 7th category. When an email carries attachments, the six
+# original weights are scaled down proportionally to make room for it, so the
+# seven weights still sum to 1.0.
+ATTACHMENT_WEIGHT = 0.13
+WEIGHTS = {k: v * (1.0 - ATTACHMENT_WEIGHT) for k, v in BASE_WEIGHTS.items()}
+WEIGHTS['attachment_risk'] = ATTACHMENT_WEIGHT
 assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-6, "WEIGHTS must sum to 1.0"
+
+
+def _active_weights(has_attachments: bool) -> dict:
+    """With no attachments the category does not apply, so scoring is unchanged from before."""
+    if has_attachments:
+        return dict(WEIGHTS)
+    return dict(BASE_WEIGHTS)
 
 FEATURE_LABELS = {
     'sender_domain_mismatch': 'Sender Identity & Domain',
@@ -61,6 +78,7 @@ FEATURE_LABELS = {
     'urgency_score': 'Urgent or Pressuring Tone',
     'poor_grammar_score': 'Generic Greetings & Spam Phrases',
     'num_links': 'External Link Risk',
+    'attachment_risk': 'Attachment Risk',
 }
 
 
@@ -227,6 +245,31 @@ def extract_email_features(email_data: dict) -> dict:
     word_count = len(words)
     html_form_present = 1 if ('<form' in body_lower or '<input' in body_lower) else 0
 
+    # Attachment Risk (7th category). Reports come from src/features/attachment_scanner.py
+    attachment_reports = [r for r in (email_data.get('attachment_reports') or []) if isinstance(r, dict)]
+    att_summary = summarize_reports(attachment_reports)
+    has_attachments = att_summary['count'] > 0
+    attachment_phi = att_summary['max_risk']
+    active_weights = _active_weights(has_attachments)
+    if has_attachments:
+        worst = max(
+            (r for r in attachment_reports if not r.get('skipped')),
+            key=lambda r: float(r.get('risk', 0.0)),
+            default=None,
+        )
+        if worst and worst.get('findings'):
+            top = [f['text'] for f in worst['findings'] if f.get('severity') != 'info'][:2]
+            attachment_evidence = (
+                f"{att_summary['count']} attachment(s). Highest risk: '{worst['filename']}' ({worst['verdict']})"
+                + (f" - {'; '.join(top)}" if top else '')
+            )
+        elif att_summary['scanned'] == 0:
+            attachment_evidence = f"{att_summary['count']} attachment(s) could not be scanned"
+        else:
+            attachment_evidence = f"{att_summary['count']} attachment(s) scanned, no issues found"
+    else:
+        attachment_evidence = 'No attachments'
+
     binary_triggers_h = {
         'sender_domain_mismatch': 1.0 if sender_domain_mismatch > 0 else 0.0,
         'cred_request_score': 1.0 if cred_request_score > 0 else 0.0,
@@ -234,6 +277,7 @@ def extract_email_features(email_data: dict) -> dict:
         'urgency_score': 1.0 if urgency_score > 0 else 0.0,
         'poor_grammar_score': 1.0 if poor_grammar_score > 0 else 0.0,
         'num_links': 1.0 if num_links > 0 else 0.0,
+        'attachment_risk': 1.0 if attachment_phi > 0 else 0.0,
     }
 
     subj_exclam_bonus = 0.5 if '!' in subject else 0.0
@@ -248,6 +292,7 @@ def extract_email_features(email_data: dict) -> dict:
         ),
         'poor_grammar_score': _log_zone_strength(len(gram_subj_hits), len(gram_body_hits), tau=10.0),
         'num_links': min(1.0, (0.65 * url_threat_phi) + (0.35 * _normalize(num_links, 3))),
+        'attachment_risk': attachment_phi,
     }
 
     rule_evidence = {
@@ -277,13 +322,14 @@ def extract_email_features(email_data: dict) -> dict:
             if num_links > 0
             else "No external links in email body"
         ),
+        'attachment_risk': attachment_evidence,
     }
 
     breakdown = []
     base_sh = 0.0
     proposed_raw_sh = 0.0
 
-    for key, weight in WEIGHTS.items():
+    for key, weight in active_weights.items():
         h_val = binary_triggers_h[key]
         phi_val = proposed_strengths_phi[key]
 
@@ -309,7 +355,12 @@ def extract_email_features(email_data: dict) -> dict:
     urg_phi = proposed_strengths_phi['urgency_score']
     cred_phi = proposed_strengths_phi['cred_request_score']
 
-    psi_synergy = round((6.0 * spoof_phi * url_phi) + (4.0 * urg_phi * cred_phi * url_phi), 2)
+    psi_synergy = round(
+        (6.0 * spoof_phi * url_phi)
+        + (4.0 * urg_phi * cred_phi * url_phi)
+        + (3.0 * spoof_phi * attachment_phi),
+        2,
+    )
     combined_metric = proposed_raw_sh + psi_synergy
     proposed_sh_star = round(100.0 * (1.0 - math.exp(-combined_metric / 75.0)), 2)
     base_sh = round(min(100.0, base_sh), 2)
@@ -320,7 +371,7 @@ def extract_email_features(email_data: dict) -> dict:
     beta_base = 0.50
     base_final_score = round(beta_base * base_sh + (1.0 - beta_base) * p_ml, 2)
 
-    hard_evidence = max(spoof_phi, url_phi)
+    hard_evidence = max(spoof_phi, url_phi, attachment_phi)
     beta_adaptive = round(0.55 + 0.30 * (proposed_sh_star / 100.0) * hard_evidence, 3)
     proposed_final_score = round(beta_adaptive * proposed_sh_star + (1.0 - beta_adaptive) * p_ml, 2)
 
@@ -338,7 +389,9 @@ def extract_email_features(email_data: dict) -> dict:
         'word_count': word_count,
         'html_form_present': html_form_present,
         'cred_request_score': cred_request_score,
-        'has_attachment': has_attachment,
+        'has_attachment': 1 if (has_attachments or has_attachment) else 0,
+        'attachment_count': att_summary['count'],
+        'attachment_confirmed_malicious': att_summary['confirmed_malicious'],
         'email_risk_score': proposed_final_score,
         'is_suspicious_email': 1 if proposed_final_score >= 50 else 0,
         'breakdown': breakdown,

@@ -2,9 +2,9 @@ import os
 import docx
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.oxml import OxmlElement, parse_xml
-from docx.oxml.ns import qn, nsdecls
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 def set_cell_background(cell, hex_color):
     tcPr = cell._tc.get_or_add_tcPr()
@@ -23,7 +23,7 @@ def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
     ''')
     tcPr.append(tcMar)
 
-def create_design_document_docx(output_path):
+def create_design_document_docx(output_path, diagrams_dir):
     doc = docx.Document()
 
     # Set page margins (1 inch all around)
@@ -52,15 +52,15 @@ def create_design_document_docx(output_path):
 
     sub_p = doc.add_paragraph()
     sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    sub_run = sub_p.add_run("Design Document & System Architecture\nFunctional Block Diagram and UML Diagrams (Updated Final Report)")
+    sub_run = sub_p.add_run("Design Document & System Architecture\nFunctional Block Diagram and UML Diagrams (Final Report)")
     sub_run.font.name = 'Arial'
-    sub_run.font.size = Pt(14)
+    sub_run.font.size = Pt(13)
     sub_run.font.bold = True
     sub_run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
 
     links_p = doc.add_paragraph()
     links_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    links_p.paragraph_format.space_after = Pt(14)
+    links_p.paragraph_format.space_after = Pt(12)
     r1 = links_p.add_run("GitHub Repository: ")
     r1.font.bold = True
     links_p.add_run("https://github.com/ShreyanBangera00/PhishGuard\n")
@@ -78,7 +78,6 @@ def create_design_document_docx(output_path):
         ["Suraj Sahoo", "K001", "70102400074"]
     ]
 
-    col_widths = [Inches(2.5), Inches(1.5), Inches(2.0)]
     for i, h in enumerate(headers):
         cell = table.cell(0, i)
         cell.text = h
@@ -96,9 +95,8 @@ def create_design_document_docx(output_path):
             set_cell_background(cell, "F8FAFC" if row_idx % 2 == 1 else "FFFFFF")
             set_cell_margins(cell, top=80, bottom=80, left=150, right=150)
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(10)
+    doc.add_paragraph().paragraph_format.space_after = Pt(8)
 
-    # Helper function for headings
     def add_h1(text):
         h = doc.add_heading(text, level=1)
         h.paragraph_format.space_before = Pt(16)
@@ -119,6 +117,27 @@ def create_design_document_docx(output_path):
         h.runs[0].font.color.rgb = RGBColor(0x14, 0x63, 0xF3)
         return h
 
+    def add_image_with_caption(img_filename, caption_text, width_inches=6.0):
+        full_path = os.path.join(diagrams_dir, img_filename)
+        if not os.path.exists(full_path):
+            print(f"WARNING: Image not found: {full_path}")
+            return
+        p_img = doc.add_paragraph()
+        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_img.paragraph_format.space_before = Pt(8)
+        p_img.paragraph_format.space_after = Pt(2)
+        run = p_img.add_run()
+        run.add_picture(full_path, width=Inches(width_inches))
+
+        p_cap = doc.add_paragraph()
+        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_cap.paragraph_format.space_after = Pt(12)
+        r_cap = p_cap.add_run(caption_text)
+        r_cap.font.name = 'Calibri'
+        r_cap.font.italic = True
+        r_cap.font.size = Pt(10)
+        r_cap.font.color.rgb = RGBColor(0x4B, 0x55, 0x63)
+
     # ----------------------------------------------------
     # 1. Introduction
     # ----------------------------------------------------
@@ -136,7 +155,7 @@ def create_design_document_docx(output_path):
     p.paragraph_format.space_after = Pt(6)
 
     p = doc.add_paragraph(
-        "This document describes the design and technical architecture of the PhishGuard platform using a functional block diagram and UML diagrams (class diagram, state transition diagram, and sequence diagrams), fully updated to reflect the production source code in the repository."
+        "This document describes the design and technical architecture of the PhishGuard platform using a functional block diagram and three types of UML diagrams: class diagrams, a state transition diagram, and sequence diagrams, fully updated to reflect the production source code in the repository."
     )
     p.paragraph_format.line_spacing = 1.15
     p.paragraph_format.space_after = Pt(12)
@@ -149,20 +168,10 @@ def create_design_document_docx(output_path):
         "Figure 1 shows the main functional blocks of PhishGuard and the data flow between them. The user interacts exclusively with the frontend dashboard. The dashboard communicates with the FastAPI backend over REST (JSON). The backend coordinates the feature acquisition layer, queries external threat intelligence and verification services (Google Safe Browsing, Disify Free Email API, live DNS and WHOIS), executes the analysis and ML layers, and synthesizes the final explainable response."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 1
-    fig1_path = r"docs\extracted_diagrams\page_2_img_1_Image15.png"
-    if os.path.exists(fig1_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig1_path, width=Inches(6.0))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 1: Functional block diagram of PhishGuard")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(10)
+    # Insert Figure 1
+    add_image_with_caption("page_2_img_1_Image15.png", "Figure 1: Functional block diagram of PhishGuard", width_inches=6.2)
 
     # Table 1: Modules and Responsibilities
     p = doc.add_paragraph("Table 1 lists each component with its location in the repository and its technical responsibilities.")
@@ -186,7 +195,6 @@ def create_design_document_docx(output_path):
     t1 = doc.add_table(rows=len(modules_data) + 1, cols=3)
     t1.alignment = WD_TABLE_ALIGNMENT.CENTER
     t1_headers = ["Block / Module", "Repository Location", "Key Responsibilities"]
-    t1_widths = [Inches(1.8), Inches(1.8), Inches(2.9)]
 
     for i, h in enumerate(t1_headers):
         cell = t1.cell(0, i)
@@ -213,105 +221,56 @@ def create_design_document_docx(output_path):
     # ----------------------------------------------------
     add_h1("3. UML Diagrams")
 
+    # 3.1 Class Diagram
     add_h2("3.1 Class Diagram")
     p = doc.add_paragraph(
         "The class model is divided into two logical diagrams. Figure 2 illustrates the data models and the central FastAPI application interface. Request and response schemas inherit from Pydantic's BaseModel to guarantee strict data validation, serialization, and OpenAPI compliance. PhishGuardAPI encapsulates the REST routing endpoints, request handling, and response synthesis."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 2
-    fig2_path = r"docs\extracted_diagrams\page_4_img_1_Image20.png"
-    if os.path.exists(fig2_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig2_path, width=Inches(5.5))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 2: Class diagram - Data models and API interface")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(10)
+    # Insert Figure 2
+    add_image_with_caption("page_4_img_1_Image20.png", "Figure 2: Class diagram - Data models and API interface", width_inches=5.8)
 
     p = doc.add_paragraph(
-        "Figure 3 shows the service and engine components utilized by the PhishGuard backend. Python modules containing specialized functions are represented as stereotyped service classes, emphasizing loose coupling and modular separation of concerns."
+        "Figure 3 shows the service and engine components utilized by the PhishGuard backend. Python modules containing specialized functions are represented as stereotyped service classes, emphasizing loose coupling and modular separation of concerns. PhishGuardAPI coordinates these services depending on whether URL inspection, deep page scraping, or email analysis is invoked."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 3
-    fig3_path = r"docs\extracted_diagrams\page_5_img_1_Image23.png"
-    if os.path.exists(fig3_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig3_path, width=Inches(5.8))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 3: Class diagram - Analysis and feature services")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(12)
+    # Insert Figure 3
+    add_image_with_caption("page_5_img_1_Image23.png", "Figure 3: Class diagram - Analysis and feature services", width_inches=6.0)
 
-    # ----------------------------------------------------
+    # 3.2 State Transition Diagram
     add_h2("3.2 State Transition Diagram")
     p = doc.add_paragraph(
         "Figure 4 illustrates the finite state lifecycle of an inspection request processed by the backend. A request transitions from Idle to Validating Input. Invalid payloads immediately transition to Rejected and return an HTTP 4xx response. Valid input progresses through parallel feature extraction, classification, explanation, and threat lookup states. If deep scraping is selected, the Page Analysis state verifies SSRF constraints and inspects DOM artifacts before entering the Risk Scoring state where hybrid heuristics and ML probabilities are synthesized."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 4
-    fig4_path = r"docs\extracted_diagrams\page_6_img_1_Image26.png"
-    if os.path.exists(fig4_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig4_path, width=Inches(5.2))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 4: State transition diagram of an analysis request")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(12)
+    # Insert Figure 4
+    add_image_with_caption("page_6_img_1_Image26.png", "Figure 4: State transition diagram of an analysis request", width_inches=5.6)
 
-    # ----------------------------------------------------
+    # 3.3 Sequence Diagrams
     add_h2("3.3 Sequence Diagrams")
     p = doc.add_paragraph(
         "Figure 5 details the end-to-end execution flow for standard URL analysis (POST /api/predict). The FastAPI backend sequentially invokes the URL feature extractor, network intelligence module, machine learning classifier, explainability engine, and threat intelligence service before calculating the risk score and returning the PredictionResponse to the client."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 5
-    fig5_path = r"docs\extracted_diagrams\page_7_img_1_Image29.png"
-    if os.path.exists(fig5_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig5_path, width=Inches(5.5))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 5: Sequence diagram - URL analysis (POST /api/predict)")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(12)
+    # Insert Figure 5
+    add_image_with_caption("page_7_img_1_Image29.png", "Figure 5: Sequence diagram - URL analysis (POST /api/predict)", width_inches=5.8)
 
     p = doc.add_paragraph(
         "Figure 6 details the execution flow for deep content analysis (POST /api/analyze-content). In addition to lexical prediction, the Page Analyzer executes a strict Server-Side Request Forgery (SSRF) verification. If the URL resolves to loopback, broadcast, or private RFC-1918 networks, the request is halted with HTTP 400. Legitimate public endpoints are safely scraped to evaluate login forms, external assets, and SSL certificates."
     )
     p.paragraph_format.line_spacing = 1.15
-    p.paragraph_format.space_after = Pt(8)
+    p.paragraph_format.space_after = Pt(6)
 
-    # Embed Figure 6
-    fig6_path = r"docs\extracted_diagrams\page_8_img_1_Image32.png"
-    if os.path.exists(fig6_path):
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_img.add_run().add_picture(fig6_path, width=Inches(5.2))
-        p_cap = doc.add_paragraph()
-        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_cap = p_cap.add_run("Figure 6: Sequence diagram - Deep content analysis (POST /api/analyze-content)")
-        r_cap.font.italic = True
-        r_cap.font.size = Pt(10)
-        p_cap.paragraph_format.space_after = Pt(12)
+    # Insert Figure 6
+    add_image_with_caption("page_8_img_1_Image32.png", "Figure 6: Sequence diagram - Deep content analysis (POST /api/analyze-content)", width_inches=5.5)
 
     # ----------------------------------------------------
     # 4. Advanced Production Capabilities
@@ -346,8 +305,10 @@ def create_design_document_docx(output_path):
         p_item.add_run(desc)
 
     doc.save(output_path)
-    print(f"Successfully generated updated design document at: {output_path}")
+    print(f"Successfully generated updated design document with embedded images at: {output_path}")
 
 if __name__ == "__main__":
-    out_docx = r"C:\Users\yuvib\Desktop\Projects\PhishGuard-main\docs\PhishGuard_Design_Document_Final_Report.docx"
-    create_design_document_docx(out_docx)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    diagrams_dir = os.path.join(current_dir, "extracted_diagrams")
+    out_docx = os.path.join(current_dir, "PhishGuard_Design_Document_Final_Report.docx")
+    create_design_document_docx(out_docx, diagrams_dir)

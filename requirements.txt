@@ -12,3 +12,4 @@ pydantic>=2.0.0
 python-dotenv>=1.0.0
 python-whois>=0.8.0
 pytest>=8.0.0
+oletools>=0.60

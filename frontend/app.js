@@ -208,6 +208,151 @@ document.addEventListener('DOMContentLoaded', () => {
     resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  // ─── Attachment handling (manual upload + Gmail attachments) ───
+  const attachInput = document.getElementById('email-attachments');
+  const btnClearAttachments = document.getElementById('btn-clear-attachments');
+  const attachmentStatus = document.getElementById('attachment-status');
+  const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+  const MAX_ATTACH_FILES = 5;
+  let attachmentReports = [];
+
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function setAttachmentStatus(msg, isError) {
+    attachmentStatus.textContent = msg;
+    attachmentStatus.className = 'attach-status' + (isError ? ' error' : '') + (msg ? '' : ' hidden');
+  }
+
+  function setAttachmentReports(reports) {
+    attachmentReports = reports || [];
+    if (attachmentReports.length) {
+      const names = attachmentReports.map(r => r.filename).join(', ');
+      setAttachmentStatus(`${attachmentReports.length} attachment(s) ready to scan: ${names}`, false);
+      btnClearAttachments.classList.remove('hidden');
+    } else {
+      setAttachmentStatus('', false);
+      btnClearAttachments.classList.add('hidden');
+      attachInput.value = '';
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  attachInput.addEventListener('change', async () => {
+    const files = Array.from(attachInput.files || []);
+    if (!files.length) {
+      setAttachmentReports([]);
+      return;
+    }
+    if (files.length > MAX_ATTACH_FILES) {
+      setAttachmentReports([]);
+      setAttachmentStatus(`Please select at most ${MAX_ATTACH_FILES} files.`, true);
+      return;
+    }
+    const tooBig = files.find(f => f.size > MAX_ATTACH_BYTES);
+    if (tooBig) {
+      setAttachmentReports([]);
+      setAttachmentStatus(`${tooBig.name} is larger than ${MAX_ATTACH_BYTES / (1024 * 1024)} MB and cannot be scanned.`, true);
+      return;
+    }
+
+    setAttachmentStatus('Scanning attachments...', false);
+    try {
+      const payloadFiles = [];
+      for (const f of files) {
+        payloadFiles.push({ filename: f.name, content_type: f.type || '', data_b64: await fileToBase64(f) });
+      }
+      const resp = await fetch('/api/scan-attachments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: payloadFiles })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Attachment scan failed');
+      setAttachmentReports(data.reports || []);
+    } catch (e) {
+      setAttachmentReports([]);
+      setAttachmentStatus(e.message, true);
+    }
+  });
+
+  btnClearAttachments.addEventListener('click', () => setAttachmentReports([]));
+
+  function attachmentLabel(m) {
+    const reps = m.attachment_reports || [];
+    if (!reps.length) return '';
+    const risky = reps.some(r => r.confirmed_malicious || (r.risk || 0) >= 0.35);
+    return `<span class="gmail-att${risky ? ' risky' : ''}">${reps.length} attachment${reps.length > 1 ? 's' : ''}${risky ? ' - flagged' : ''}</span>`;
+  }
+
+  function buildAttachmentCard(reports) {
+    if (!reports || !reports.length) return '';
+    const verdictClass = v => ({
+      'Malicious': 'danger', 'High risk': 'danger', 'Suspicious': 'warning',
+      'Low risk': 'warning', 'No issues found': 'safe', 'Not scanned': 'neutral'
+    }[v] || 'neutral');
+
+    const rows = reports.map(r => {
+      const findings = (r.findings || []).filter(f => f.severity !== 'info');
+      const vt = r.vt || {};
+      let vtText = 'Lookup not configured';
+      if (vt.status === 'found') vtText = `${vt.malicious} of ${vt.total} engines flag this file`;
+      else if (vt.status === 'not found') vtText = 'Not seen before';
+      else if (vt.status === 'rate limited') vtText = 'Lookup rate-limited';
+      else if (vt.status && vt.status !== 'not configured') vtText = 'Lookup unavailable';
+
+      let findingsHtml;
+      if (r.skipped) {
+        findingsHtml = `<span class="attach-meta">${escapeHtml(r.skipped)}</span>`;
+      } else if (findings.length) {
+        findingsHtml = `<ul class="attach-findings">${findings.map(f => `<li class="${escapeHtml(f.severity)}">${escapeHtml(f.text)}</li>`).join('')}</ul>`;
+      } else {
+        findingsHtml = '<span class="attach-meta">No suspicious traits found</span>';
+      }
+
+      return `
+        <tr>
+          <td>
+            <div class="attach-file-name">${escapeHtml(r.filename)}</div>
+            <div class="attach-meta">${formatBytes(r.size || 0)}${r.detected_type ? ' &middot; detected as ' + escapeHtml(r.detected_type) : ''}</div>
+            <div class="attach-hash">SHA-256 ${escapeHtml(r.sha256 || '')}</div>
+          </td>
+          <td><span class="attach-verdict ${verdictClass(r.verdict)}">&#9632; ${escapeHtml(r.verdict || '')}</span></td>
+          <td>${findingsHtml}</td>
+          <td class="attach-meta">${escapeHtml(vtText)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3>Attachment Analysis</h3>
+          <span class="chip-badge">${reports.length} File${reports.length > 1 ? 's' : ''}</span>
+        </div>
+        <p class="section-desc">Files are checked in memory using static analysis and a hash lookup. They are never opened or executed.</p>
+        <div class="table-responsive">
+          <table class="attach-table">
+            <thead><tr><th>File</th><th>Verdict</th><th>Findings</th><th>VirusTotal</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <p class="attach-note">"No issues found" means none of these checks triggered. It is not a guarantee that a file is safe, because new or heavily disguised malware can pass static checks.</p>
+      </div>
+    `;
+  }
+
   // ─── 4. Email Inspector ───
   btnTestPhishEmail.addEventListener('click', () => {
     emailSender.value = 'security-update@paypal-auth-center.xyz';
@@ -223,6 +368,7 @@ Click here to verify now: http://paypal-resolution-center.xyz/update-account?ses
 Please provide your login password and credit card details to confirm ownership.
 Thank you,
 PayPal Security Department`;
+    setAttachmentReports([]);
   });
 
   btnScanEmail.addEventListener('click', async () => {
@@ -230,7 +376,8 @@ PayPal Security Department`;
       sender: emailSender.value.trim(),
       claimed_org: emailClaimedOrg.value.trim(),
       subject: emailSubject.value.trim(),
-      body: emailBody.value.trim()
+      body: emailBody.value.trim(),
+      attachment_reports: attachmentReports
     };
 
     if (!payload.body && !payload.subject) {
@@ -301,7 +448,7 @@ PayPal Security Department`;
               <span class="gmail-item-sender">${escapeHtml(m.sender_name)} &lt;${escapeHtml(m.sender_email)}&gt;</span>
               <span>${escapeHtml(m.date)}</span>
             </div>
-            <div class="gmail-item-subject">${escapeHtml(m.subject)}</div>
+            <div class="gmail-item-subject">${escapeHtml(m.subject)}${attachmentLabel(m)}</div>
             <div class="gmail-item-snippet">${escapeHtml(m.snippet)}</div>
           </div>
           <button class="btn-primary gmail-scan-btn" data-idx="${i}">Scan</button>
@@ -316,6 +463,7 @@ PayPal Security Department`;
           emailClaimedOrg.value = m.claimed_org || '';
           emailSubject.value = m.subject;
           emailBody.value = m.body;
+          setAttachmentReports(m.attachment_reports || []);
           btnScanEmail.click();
         });
       });
@@ -343,7 +491,8 @@ PayPal Security Department`;
       html_form_present: 'Suspicious Links & Forms',
       urgency_score: 'Urgent or Pressuring Tone',
       poor_grammar_score: 'Generic Greetings & Spam Phrases',
-      num_links: 'External Link Risk'
+      num_links: 'External Link Risk',
+      attachment_risk: 'Attachment Risk'
     };
 
     const SEGMENT_COLORS = {
@@ -352,7 +501,8 @@ PayPal Security Department`;
       html_form_present: '#1463F3',
       urgency_score: '#D97706',
       poor_grammar_score: '#475569',
-      num_links: '#0D9488'
+      num_links: '#0D9488',
+      attachment_risk: '#7C2D12'
     };
 
     // 1. Circular SVG Donut Gauge calculation
@@ -519,13 +669,14 @@ PayPal Security Department`;
         </div>
       </div>
 
+      ${buildAttachmentCard(data.attachments)}
       <!-- Two-Column Visual Breakdown -->
       <div class="results-grid">
         <!-- Left Card: Visual Bar Graph of the 6 Checks -->
         <div class="card">
           <div class="card-header">
             <h3>Risk Breakdown by Category</h3>
-            <span class="chip-badge">6 Security Checks</span>
+            <span class="chip-badge">${breakdown.length} Security Checks</span>
           </div>
           <p class="section-desc">Each bar shows how many risk points were triggered in that category out of its maximum weight.</p>
           <div class="email-bars-container">
@@ -540,7 +691,7 @@ PayPal Security Department`;
             <h3>How the Score Was Calculated</h3>
             <span class="chip-badge">Plain-English Summary</span>
           </div>
-          <p class="section-desc">Your final risk score combines our 6 security rule checks with an analysis of the email's language density.</p>
+          <p class="section-desc">Your final risk score combines our ${breakdown.length} security rule checks with an analysis of the email's language density.</p>
 
           ${totalEarnedPts > 0 ? `
             <div class="stack-chart-box">
@@ -556,8 +707,8 @@ PayPal Security Department`;
               <div class="calc-step-left">
                 <span class="calc-step-num">1</span>
                 <div>
-                  <strong>6 Security Rule Checks</strong>
-                  <p>Points from the 6 checks on the left (${totalEarnedPts.toFixed(1)} pts)${synergyPts > 0 ? ` + ${synergyPts.toFixed(1)} bonus pts because multiple red flags appeared together` : ''}, scaled smoothly to 100.</p>
+                  <strong>${breakdown.length} Security Rule Checks</strong>
+                  <p>Points from the ${breakdown.length} checks on the left (${totalEarnedPts.toFixed(1)} pts)${synergyPts > 0 ? ` + ${synergyPts.toFixed(1)} bonus pts because multiple red flags appeared together` : ''}, scaled smoothly to 100.</p>
                 </div>
               </div>
               <span class="calc-step-val">${ruleScore.toFixed(1)} <small>/ 100</small></span>

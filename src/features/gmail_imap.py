@@ -132,6 +132,40 @@ def _clean_claimed_org(display_name: str, sender_email: str) -> str:
     return cleaned_short if cleaned_short else cleaned
 
 
+def _extract_attachments(msg: email.message.Message, max_count: int = 5, max_bytes: int = 10 * 1024 * 1024) -> list[dict]:
+    """
+    Collects real file attachments (not inline logos or tracking pixels) from a MIME message.
+    Returns dicts holding the raw bytes in memory only; callers must scan and discard them.
+    """
+    found = []
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        disposition = str(part.get("Content-Disposition") or "").lower()
+        raw_name = part.get_filename()
+        if not raw_name and "attachment" not in disposition:
+            continue
+        # Skip inline images such as signatures and tracking pixels
+        if "inline" in disposition and part.get_content_maintype() == "image":
+            continue
+        if len(found) >= max_count:
+            break
+
+        filename = _decode_mime_words(raw_name) if raw_name else "unnamed"
+        try:
+            payload = part.get_payload(decode=True) or b""
+        except Exception:
+            payload = b""
+        found.append({
+            "filename": filename,
+            "content_type": part.get_content_type(),
+            "size": len(payload),
+            "data": payload if len(payload) <= max_bytes else b"",
+            "too_large": len(payload) > max_bytes,
+        })
+    return found
+
+
 def fetch_gmail_messages(
     gmail_address: str,
     app_password: str,
@@ -215,7 +249,8 @@ def fetch_gmail_messages(
                 "subject": subject,
                 "date": formatted_date,
                 "body": body,
-                "snippet": snippet
+                "snippet": snippet,
+                "raw_attachments": _extract_attachments(msg),
             })
     finally:
         try:
